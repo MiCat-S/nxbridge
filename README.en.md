@@ -207,13 +207,15 @@ Things to watch out for on macOS:
 nxbridge doesn't modify Claude Code or Codex. It plugs in entirely through extension points the two CLIs provide. Setup installs a plugin named `nxbridge` on each side, and a local coordinator relays messages between them.
 
 ```mermaid
-flowchart LR
+flowchart TB
   subgraph CC["Claude Code window"]
+    direction LR
     CM["mod<br/>hooks/register.js"]
     CMCP["MCP server codex<br/>fallback tools"]
     CH["hooks<br/>SessionStart / SessionEnd"]
   end
   subgraph CX["Codex session"]
+    direction LR
     XMCP["MCP server claude<br/>claude.* tools"]
     XH["hooks × 9"]
     XAS["App Server interface<br/>codex app-server"]

@@ -207,13 +207,15 @@ nxbridge release codex   # 长期交还给你自己的窗口：等后台这一�
 nxbridge 不修改 Claude Code 和 Codex 的程序，全部通过两家官方提供的扩展点接入。安装时，两边各装一个名为 `nxbridge` 的插件，中间由一个本机协调器负责转发。
 
 ```mermaid
-flowchart LR
+flowchart TB
   subgraph CC["Claude Code 窗口"]
+    direction LR
     CM["mod<br/>hooks/register.js"]
     CMCP["MCP 服务 codex<br/>备用工具"]
     CH["hooks<br/>SessionStart / SessionEnd"]
   end
   subgraph CX["Codex 会话"]
+    direction LR
     XMCP["MCP 服务 claude<br/>claude.* 工具"]
     XH["hooks × 9"]
     XAS["App Server 接口<br/>codex app-server"]
