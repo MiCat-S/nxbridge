@@ -174,12 +174,17 @@ nxbridge release codex   # 长期交还给你自己的窗口：等后台这一�
 
 你自己的 Codex 窗口关掉后，配对不会断。下次 Claude 发信时，会让你选择：在后台继续原会话 / 等我重新打开窗口 / 新建后台 Codex / 解除配对。
 
-### 换搭档、暂停和关闭
+### 换搭档和暂停
 
 - **换搭档或解除配对：** 在 Claude 里输入 `/nxbridge pair`（或直接说"换个搭档"），在 Codex 里输入 `nxbridge pair`。
 - **暂停 / 恢复通信：** `nxbridge pause` / `nxbridge resume`。
-- **暂时完全不碰某一边：** 直接跟 AI 说"关掉 Codex"或"关掉 Claude"。重新打开要你亲手操作：在 Claude 里输入 `/nxbridge on codex`，或在终端运行 `nxbridge on codex`。
 - **实时看双方往来：** `nxbridge watch`。
+
+### 不想用某一边时
+
+- **只是这次不用：** 直接跟 AI 说"这次不要调用 Codex"或"不要找 Claude"，它就自己做，不会把任务发给对方。
+- **一段时间都不用：** 跟 AI 说"关掉 Codex"或"关掉 Claude"。之后 nxbridge 不再给那一边发消息，也不叫醒、不重启它；配对和已经排队的消息都保留，窗口关掉或电脑重启后也保持关闭。
+- **重新打开：** 只能你亲手操作，AI 不能替你打开。在 Claude 里输入 `/nxbridge on codex`，在 Codex 里输入 `nxbridge on claude`，或者在终端运行 `nxbridge on codex`。
 
 ### 多组配对
 

@@ -176,12 +176,17 @@ nxbridge release codex   # hand back to your own window for good; it waits for t
 
 If you close your own Codex window, the pair stays. The next time Claude sends a message, you choose: continue the session in the background / wait for me to reopen the window / start a new background Codex / unpair.
 
-### Changing partners, pausing and turning off
+### Changing partners and pausing
 
 - **Change partners or unpair:** In Claude, type `/nxbridge pair` (or just say "switch partners"). In Codex, type `nxbridge pair`.
 - **Pause or resume messaging:** `nxbridge pause` / `nxbridge resume`.
-- **Make nxbridge leave one side completely alone:** Tell the AI "turn off Codex" or "turn off Claude". Only you can turn it back on: type `/nxbridge on codex` in Claude, or run `nxbridge on codex` in a terminal.
 - **Watch the conversation live:** `nxbridge watch`.
+
+### When you don't want to use one side
+
+- **Just this time:** Tell the AI "don't call Codex this time" or "don't involve Claude". It does the work itself and doesn't send the task to the other side.
+- **For a while:** Tell the AI "turn off Codex" or "turn off Claude". nxbridge then stops sending messages to that side and won't wake or restart it. The pair and any queued messages are kept, and the side stays off even after you close the window or restart the computer.
+- **Turning it back on:** Only you can do this; the AI can't. Type `/nxbridge on codex` in Claude or `nxbridge on claude` in Codex, or run `nxbridge on codex` in a terminal.
 
 ### Multiple pairs
 
