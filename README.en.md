@@ -47,9 +47,9 @@ nxbridge adds a local message channel between them. Once it's installed, you can
 - If either CLI is older than the tested versions, the setup check warns you, but it may still work. Upgrade first if you can.
 - In each project directory you plan to use, open `claude` and `codex` once and accept each one's directory trust prompt. In a directory that hasn't been trusted, background sessions stop and wait for you.
 - Platforms:
-  - Windows and WSL (Ubuntu 22.04) have been verified.
-  - Other Linux distributions should work but haven't been tested separately.
-  - macOS works, but the author hasn't finished testing it on real hardware.
+  - **macOS:** In daily use on a real Mac running macOS 27 (Apple silicon). See [Using it on macOS](#using-it-on-macos) for what to watch out for. The author's official verification isn't finished yet.
+  - **Windows and WSL (Ubuntu 22.04):** Verified by the author.
+  - **Other Linux distributions:** Should work, but haven't been tested separately.
 
 ### 2. Download
 
@@ -170,6 +170,21 @@ You can have several pairs on one computer. Each window talks only to its own pa
 - Running `/clear` in Claude or switching conversations in Codex keeps the same partner.
 - If you close a window and later open the same conversation with `--resume`, the original partner is reconnected.
 - When you run `pause`, `unpair`, `restart`, `open`, `adopt`, `release` and similar commands from an outside terminal, use `--pair`, `--member` or `--session` to choose the target. You can find the IDs with `nxbridge status`.
+
+### Using it on macOS
+
+nxbridge is in daily use on this setup:
+
+- macOS 27.0 (Apple silicon), Node.js 26.7, Claude Code 2.1.308, Codex 0.166.0 (installed with Homebrew)
+- Features in use: installing and updating many times, messaging in both directions, background Codex and Claude partners, several pairs running at once, and handing sessions to the background with `adopt`
+
+Things to watch out for on macOS:
+
+- **Codex windows you open yourself aren't woken up.** Since Codex 0.166, sessions run in a shared background service by default, so a message to your own window arrives only after you type something in that window. For fully automatic back-and-forth, let nxbridge start Codex in the background, or hand your session over with `nxbridge adopt codex`.
+- **Background Codex still runs in Codex's shared background service.** On Linux and Windows, nxbridge runs background Codex on its own. On macOS this hasn't changed yet. nxbridge never stops or restarts that service.
+- **Before nxbridge can start Claude in the background, trust the project directory from the command line.** Run `claude` once in that directory and accept the trust prompt. Trusting it only in the Claude desktop app isn't enough.
+- **The ChatGPT app may hold a Codex session.** If `nxbridge adopt codex` says the session is in use, close that session in the ChatGPT app first. If it still says so, quit the ChatGPT app (⌘Q).
+- **If something goes wrong:** Send the full output of `nxbridge doctor` to the author. To help the author collect macOS verification evidence, see [`publish/tools/macos-validation.md`](publish/tools/macos-validation.md) (in Chinese).
 
 ## Common commands
 
