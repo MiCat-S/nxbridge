@@ -4,7 +4,7 @@
 
 让同一台电脑上的 **Claude Code** 和 **Codex CLI** 互相发消息，像两个平等的同事一样协作。
 
-作者：**nmbot**
+作者：**nmBot**
 
 ## 介绍
 
@@ -340,9 +340,14 @@ nxbridge uninstall --purge     # 连同 ~/.nxbridge 一起删除
   - 不要修改、增删其中的文件。安装程序会按 `publish.json` 逐个核对文件，有任何不一致都会拒绝安装。
   - `.gitattributes` 已关闭这个目录的换行符转换，Windows 上克隆也不会改动文件内容。
 - `README.md` / `README.en.md`：本说明的中文版和英文版。
+- `assets/`：README 用到的图片。
 
 ## 作者与许可证
 
-nxbridge 由 **nmbot** 开发。本仓库收录 nmbot 发布的版本，`publish/` 里的文件与作者发布的 zip 完全一致。
+nxbridge 由 **nmBot** 开发。本仓库收录 nmBot 发布的版本，`publish/` 里的文件与作者发布的 zip 完全一致。
+
+作者本人的确认：
+
+<img src="assets/author-nmbot.webp" alt="nmBot：是我，就是我写的" width="360">
 
 许可证为 MIT，见 [`publish/LICENSE`](publish/LICENSE)。打包在内的第三方依赖的许可证见 [`publish/THIRD-PARTY-NOTICES.md`](publish/THIRD-PARTY-NOTICES.md)。
