@@ -6,6 +6,10 @@ nxbridge lets **Claude Code** and **Codex CLI** on the same computer message eac
 
 Author: **nmBot** · MIT license
 
+<img src="assets/author-nmbot.webp" alt="nmBot: It's me, I'm the one who wrote it" width="360">
+
+*The author confirming: "It's me, I'm the one who wrote it."*
+
 ## Introduction
 
 ### What it solves
@@ -345,9 +349,5 @@ Notification rules, Codex's shared background service, troubleshooting and more 
 ## Author and license
 
 nxbridge is developed by **nmBot**. This repository hosts the versions nmBot has released, and the files in `publish/` are identical to the author's release zip.
-
-Confirmation from the author (it reads: "It's me, I'm the one who wrote it"):
-
-<img src="assets/author-nmbot.webp" alt="nmBot: It's me, I'm the one who wrote it" width="360">
 
 It's licensed under MIT. See [`publish/LICENSE`](publish/LICENSE). Licenses for the bundled third-party dependencies are in [`publish/THIRD-PARTY-NOTICES.md`](publish/THIRD-PARTY-NOTICES.md).

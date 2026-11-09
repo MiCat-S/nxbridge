@@ -6,6 +6,8 @@
 
 作者：**nmBot** · MIT 许可
 
+<img src="assets/author-nmbot.webp" alt="nmBot：是我，就是我写的" width="360">
+
 ## 介绍
 
 ### 它解决什么问题
@@ -345,9 +347,5 @@ nxbridge uninstall --purge     # 连同 ~/.nxbridge 一起删除
 ## 作者与许可证
 
 nxbridge 由 **nmBot** 开发。本仓库收录 nmBot 发布的版本，`publish/` 里的文件与作者发布的 zip 完全一致。
-
-作者本人的确认：
-
-<img src="assets/author-nmbot.webp" alt="nmBot：是我，就是我写的" width="360">
 
 许可证为 MIT，见 [`publish/LICENSE`](publish/LICENSE)。打包在内的第三方依赖的许可证见 [`publish/THIRD-PARTY-NOTICES.md`](publish/THIRD-PARTY-NOTICES.md)。
