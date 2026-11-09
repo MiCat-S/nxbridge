@@ -92,7 +92,23 @@ Claude Code 会拦下"权限模式类别不同"的会话发来的消息，等你
 - **全部放行：** Claude 的 bypass（计划模式也算这一类），Codex 的 `approval_policy = "never"` 加 `sandbox_mode = "danger-full-access"`。
 - **需要确认：** Claude 的默认、自动（auto）、自动接受编辑模式，Codex 的默认（auto）设置。
 
-**让两边属于同一类即可，推荐两边都用需要确认的模式。** 类别不一致时，Claude 状态栏会直接告诉你该怎么改。实在不想统一，也可以每次在 Claude 的审核框里手动放行。
+**让两边属于同一类即可，推荐两边都用 bypass。** 建议用配置文件设置，这样 nxbridge 在后台启动的 Claude 和 Codex 也会用同样的模式：
+
+- **Claude：** 在 `~/.claude/settings.json` 里设置：
+
+  ```json
+  { "permissions": { "defaultMode": "bypassPermissions" } }
+  ```
+
+  只想临时用一次，也可以启动时加 `claude --dangerously-skip-permissions`。
+- **Codex：** 在 `~/.codex/config.toml` 里设置：
+
+  ```toml
+  approval_policy = "never"
+  sandbox_mode = "danger-full-access"
+  ```
+
+类别不一致时，Claude 状态栏会直接告诉你该怎么改。实在不想统一，也可以每次在 Claude 的审核框里手动放行。
 
 注意：Codex 的审批和沙箱设置改了以后，只对新开的会话生效。
 

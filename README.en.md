@@ -92,7 +92,23 @@ Claude Code holds messages from a session in a different permission class and as
 - **Full access:** Claude's bypass mode (plan mode counts as this class too), and Codex with `approval_policy = "never"` plus `sandbox_mode = "danger-full-access"`.
 - **Ask first:** Claude's default, auto and accept-edits modes, and Codex's default (auto) settings.
 
-**Both sides only need to be in the same class. Using ask-first modes on both sides is recommended.** If the classes don't match, the Claude status bar tells you what to change. If you'd rather not match them, you can release each held message by hand in Claude's review dialog.
+**Both sides only need to be in the same class. Using bypass on both sides is recommended.** Set it in the configuration files, so the Claude and Codex sessions nxbridge starts in the background use the same mode:
+
+- **Claude:** In `~/.claude/settings.json`:
+
+  ```json
+  { "permissions": { "defaultMode": "bypassPermissions" } }
+  ```
+
+  For a one-off session, you can instead start Claude with `claude --dangerously-skip-permissions`.
+- **Codex:** In `~/.codex/config.toml`:
+
+  ```toml
+  approval_policy = "never"
+  sandbox_mode = "danger-full-access"
+  ```
+
+If the classes don't match, the Claude status bar tells you what to change. If you'd rather not match them, you can release each held message by hand in Claude's review dialog.
 
 Note: changes to Codex's approval and sandbox settings only apply to new sessions.
 
