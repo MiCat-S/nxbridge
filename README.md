@@ -4,6 +4,8 @@
 
 让同一台电脑上的 **Claude Code** 和 **Codex CLI** 互相发消息，像两个平等的同事一样协作。
 
+作者：**nmbot**
+
 ## 介绍
 
 ### 它解决什么问题
@@ -15,9 +17,7 @@ nxbridge 在两者之间搭一条本机消息通道。装好后，你只要跟�
 ### 怎么工作
 
 - **两边都是官方 CLI。** 各用各的登录、模型、上下文和权限设置。nxbridge 只负责传消息，不调用任何模型，也不会把一边变成另一边的子代理。
-- **通过官方插件机制接入。** 安装时用两家官方的插件命令装上 nxbridge 插件：
-  - Claude 这边用原生的 `SendMessage` 发给 `nxbridge:codex`，插件还会在状态栏显示配对状态和提醒。
-  - Codex 这边多出一组 `claude.*` 工具（如 `claude.send_message`、`claude.status`），并通过 hooks 收消息。
+- **只用官方扩展点，不改 CLI 本身。** Claude 这边靠 mod、MCP 和 hooks 接入，Codex 这边靠 MCP、hooks 和 Codex 自带的 App Server 接口接入，都通过两家官方的插件命令安装。详见下文“[实现原理](#实现原理)”。
 - **本机协调器。** 一个小的后台进程负责配对、投递和健康检查，数据都在 `~/.nxbridge`：消息记录存在本机 SQLite 里，默认保留 7 天。所有通信只走本机，不上传任何内容。
 - **配对。** 一个 Claude 窗口和一个 Codex 会话组成一对。一台电脑上可以同时有多组配对，互不影响。
 
@@ -202,6 +202,93 @@ nxbridge release codex   # 长期交还给你自己的窗口：等后台这一�
 - **ChatGPT 应用可能占着 Codex 会话。** `nxbridge adopt codex` 提示会话被占用时，先在 ChatGPT 应用里关掉这个会话；还不行就退出 ChatGPT 应用（⌘Q）。
 - **遇到问题：** 把 `nxbridge doctor` 的完整输出反馈给作者。想帮作者补齐 macOS 的验收证据，见 [`publish/tools/macos-validation.md`](publish/tools/macos-validation.md)。
 
+## 实现原理
+
+nxbridge 不修改 Claude Code 和 Codex 的程序，全部通过两家官方提供的扩展点接入。安装时，两边各装一个名为 `nxbridge` 的插件，中间由一个本机协调器负责转发。
+
+```mermaid
+flowchart LR
+  subgraph CC["Claude Code 窗口"]
+    CM["mod<br/>hooks/register.js"]
+    CMCP["MCP 服务 codex<br/>备用工具"]
+    CH["hooks<br/>SessionStart / SessionEnd"]
+  end
+  subgraph CX["Codex 会话"]
+    XMCP["MCP 服务 claude<br/>claude.* 工具"]
+    XH["hooks × 9"]
+    XAS["App Server 接口<br/>codex app-server"]
+  end
+  B[("nxbridge 协调器<br/>~/.nxbridge<br/>配对 · 投递 · 回执 · 后台启动<br/>SQLite 消息记录")]
+  CM <-->|本机 socket| B
+  CMCP <-->|本机 socket| B
+  CH -->|登记 / 注销| B
+  B -->|原生跨会话消息| CC
+  XMCP <-->|本机 socket| B
+  XH <-->|登记 / 取件 / 状态| B
+  B <-->|JSON-RPC| XAS
+```
+
+### Claude Code 这边
+
+插件文件在 [`publish/plugins/claude/`](publish/plugins/claude/)。
+
+| 组成 | 位置 | 作用 |
+|---|---|---|
+| **mod** | `hooks/register.js`，由 `hooks/hooks.json` 的 `modules` 加载 | 主要入口，见下面的列表 |
+| **MCP 服务** `codex` | `.mcp.json`，运行 `bridge.cjs mcp --host claude` | 备用通道：mod 没加载时，Claude 用这里的工具（`send_message`、`receive_messages`、`status` 等）收发消息 |
+| **hooks** | `SessionStart`、`SessionEnd` | 会话开始和结束时，向协调器登记或注销这个窗口 |
+| **技能** `partner` | `skills/partner/` | 协作规则，以及各模型擅长什么、成本和推理强度的参考 |
+| **收消息** | Claude Code 原生的跨会话消息 | Codex 发来的消息以“来自另一个会话的消息”出现在对话里，因此会经过 Claude 的入站权限类别检查 |
+
+mod 做的事：
+
+- 接管发给 `nxbridge:codex` 的 `SendMessage`，并在 `ListAgents` 里列出 Codex 搭档。
+- 注册 `/nxbridge` 命令（配对、开关、配置），以及一组工具：选择搭档、回答 Codex 转来的问题、按编号重读消息、登记状态文件、修改配置、开关某一边、重新加载插件。
+- 在状态栏显示配对状态和提醒。
+- 跟踪轮次开始和结束、上下文压缩、会话结束；压缩后把配对和协作中的事实补回给模型。
+- 在 Codex 派来的任务里需要提问时，先问 Codex，Codex 定不了再问你。
+
+### Codex 这边
+
+插件文件在 [`publish/plugins/codex/`](publish/plugins/codex/)。
+
+| 组成 | 位置 | 作用 |
+|---|---|---|
+| **MCP 服务** `claude` | `.mcp.json`，运行 `bridge.cjs mcp --host codex` | 提供 `claude.send_message`、`claude.receive_messages`、`claude.status`、`claude.read_messages` 等工具；协作规则写在这个 MCP 服务的说明里，每个会话都会加载 |
+| **hooks** × 9 | `hooks/hooks.json` | 见下面的列表 |
+| **技能** `partner` | `skills/partner/` | 各模型擅长什么、成本和推理强度的参考 |
+| **App Server 接口** | Codex 自带的 `codex app-server`（JSON-RPC） | 协调器用它启动和恢复会话（`thread/start`、`thread/resume`），在会话空闲时投递消息并开始新一轮（`turn/start`），读取会话状态（`thread/read`、`thread/loaded/list`）。nxbridge 在后台启动的 Codex 就是一个 `codex app-server` 进程 |
+
+9 个 hooks 各自负责：
+
+| hook | 作用 |
+|---|---|
+| `SessionStart` / `SessionEnd` | 登记会话、补回协作事实；会话结束时清理 |
+| `UserPromptSubmit` | 处理配对码和配置确认，标记“正在工作” |
+| `PostToolUse` | 在工具调用的间隙取走搭档发来的消息 |
+| `PreToolUse`（仅 `spawn_agent`）/ `SubagentStop` | 展开和记录 `nxref` 引用，让长文本不必重打 |
+| `PermissionRequest` | 标记“在等你批准”，Claude 状态栏会提示 |
+| `Interrupt` | 标记暂停，取消挂起的提问 |
+| `Stop` | 标记空闲 |
+
+### 协调器
+
+- 一个 Node.js 后台进程，运行文件在 `~/.nxbridge/runtime/<版本>/`。
+- 两边插件通过 `~/.nxbridge/run/` 里的本机 socket 和它通信。这个目录只有你本人能访问，连接还要带一个随机令牌。Claude 插件另外通过本机 `127.0.0.1` 读取状态栏信息。
+- 配对、消息和事件都记在 `~/.nxbridge/nxbridge.db`（SQLite）里。
+- 负责配对和选择搭档，按对方当前的状态选投递方式，后台启动 Claude（`claude --bg`）和 Codex（`codex app-server`），检测掉线并自动恢复，以及发提醒。
+
+### 一条消息怎么走
+
+以 Claude 发给 Codex 为例：
+
+1. Claude 调用 `SendMessage` 发给 `nxbridge:codex`。mod 截下这次调用交给协调器，消息先存进 SQLite。
+2. 协调器看 Codex 现在的状态：
+   - 后台会话，或可以叫醒的窗口：通过 App Server 把消息送进会话，空闲时开始新一轮。
+   - 叫不醒的窗口：先存着，等那个会话下次有动作时（你输入，或它调用工具触发 hook）取走。
+3. Codex 用 `claude.send_message` 回复，协调器通过 Claude 原生的跨会话消息把回复送进 Claude 窗口。
+4. 每一步都有回执。结果不确定的消息不会自动重发。
+
 ## 常用命令
 
 | 命令 | 作用 |
@@ -252,6 +339,8 @@ nxbridge uninstall --purge     # 连同 ~/.nxbridge 一起删除
   - `.gitattributes` 已关闭这个目录的换行符转换，Windows 上克隆也不会改动文件内容。
 - `README.md` / `README.en.md`：本说明的中文版和英文版。
 
-## 许可证
+## 作者与许可证
 
-MIT，见 [`publish/LICENSE`](publish/LICENSE)。打包在内的第三方依赖的许可证见 [`publish/THIRD-PARTY-NOTICES.md`](publish/THIRD-PARTY-NOTICES.md)。
+nxbridge 由 **nmbot** 开发。本仓库收录 nmbot 发布的版本，`publish/` 里的文件与作者发布的 zip 完全一致。
+
+许可证为 MIT，见 [`publish/LICENSE`](publish/LICENSE)。打包在内的第三方依赖的许可证见 [`publish/THIRD-PARTY-NOTICES.md`](publish/THIRD-PARTY-NOTICES.md)。

@@ -4,6 +4,8 @@
 
 Lets **Claude Code** and **Codex CLI** on the same computer message each other and work together as equal peers.
 
+Author: **nmbot**
+
 ## Introduction
 
 ### What it solves
@@ -15,9 +17,7 @@ nxbridge adds a local message channel between them. Once it's installed, you can
 ### How it works
 
 - **Both sides stay the official CLIs.** Each keeps its own login, model, context and permission settings. nxbridge only relays messages. It never calls a model itself and never turns one side into the other's subagent.
-- **It plugs in through the official plugin systems.** Setup installs the nxbridge plugin with each CLI's own plugin commands:
-  - On the Claude side, Claude uses its native `SendMessage` to send to `nxbridge:codex`. The plugin also shows pairing status and notices in the status bar.
-  - On the Codex side, Codex gets a set of `claude.*` tools (such as `claude.send_message` and `claude.status`) and receives messages through hooks.
+- **Only official extension points; the CLIs themselves aren't modified.** On the Claude side it plugs in through a mod, MCP and hooks. On the Codex side it uses MCP, hooks and Codex's built-in App Server interface. Both are installed with each CLI's own plugin commands. See [How it's built](#how-its-built) below.
 - **A local coordinator.** A small background process handles pairing, delivery and health checks. All of its data lives in `~/.nxbridge`, and the message log is a local SQLite database kept for 7 days by default. All traffic stays on your machine. Nothing is uploaded.
 - **Pairs.** One Claude window and one Codex session form a pair. You can have several pairs on one computer, and they don't affect each other.
 
@@ -202,6 +202,93 @@ Things to watch out for on macOS:
 - **The ChatGPT app may hold a Codex session.** If `nxbridge adopt codex` says the session is in use, close that session in the ChatGPT app first. If it still says so, quit the ChatGPT app (⌘Q).
 - **If something goes wrong:** Send the full output of `nxbridge doctor` to the author. To help the author collect macOS verification evidence, see [`publish/tools/macos-validation.md`](publish/tools/macos-validation.md) (in Chinese).
 
+## How it's built
+
+nxbridge doesn't modify Claude Code or Codex. It plugs in entirely through extension points the two CLIs provide. Setup installs a plugin named `nxbridge` on each side, and a local coordinator relays messages between them.
+
+```mermaid
+flowchart LR
+  subgraph CC["Claude Code window"]
+    CM["mod<br/>hooks/register.js"]
+    CMCP["MCP server codex<br/>fallback tools"]
+    CH["hooks<br/>SessionStart / SessionEnd"]
+  end
+  subgraph CX["Codex session"]
+    XMCP["MCP server claude<br/>claude.* tools"]
+    XH["hooks × 9"]
+    XAS["App Server interface<br/>codex app-server"]
+  end
+  B[("nxbridge coordinator<br/>~/.nxbridge<br/>pairing · delivery · receipts · background launch<br/>SQLite message log")]
+  CM <-->|local socket| B
+  CMCP <-->|local socket| B
+  CH -->|register / unregister| B
+  B -->|native cross-session messages| CC
+  XMCP <-->|local socket| B
+  XH <-->|register / pickup / state| B
+  B <-->|JSON-RPC| XAS
+```
+
+### Claude Code side
+
+The plugin files are in [`publish/plugins/claude/`](publish/plugins/claude/).
+
+| Part | Location | What it does |
+|---|---|---|
+| **mod** | `hooks/register.js`, loaded through `modules` in `hooks/hooks.json` | The main entry point; see the list below |
+| **MCP server** `codex` | `.mcp.json`, runs `bridge.cjs mcp --host claude` | Fallback channel: if the mod isn't loaded, Claude sends and receives messages with these tools (`send_message`, `receive_messages`, `status` and others) |
+| **hooks** | `SessionStart`, `SessionEnd` | Register or unregister the window with the coordinator when a session starts or ends |
+| **skill** `partner` | `skills/partner/` | Collaboration rules, plus a reference for what each model is good at, its cost and reasoning effort |
+| **Receiving messages** | Claude Code's native cross-session messages | Messages from Codex show up in the conversation as messages from another session, so they go through Claude's inbound permission-class check |
+
+What the mod does:
+
+- Takes over `SendMessage` calls addressed to `nxbridge:codex`, and lists the Codex partner in `ListAgents`.
+- Registers the `/nxbridge` command (pairing, on/off, configuration) and a set of tools: choosing a partner, answering questions Codex forwards, re-reading messages by ID, registering a state file, changing configuration, turning a side on or off, and reloading plugins.
+- Shows pairing status and notices in the status bar.
+- Tracks turn start and end, context compaction and session end. After compaction, it restores the pairing and collaboration facts for the model.
+- When a task assigned by Codex needs a question answered, it asks Codex first and only asks you if Codex can't decide.
+
+### Codex side
+
+The plugin files are in [`publish/plugins/codex/`](publish/plugins/codex/).
+
+| Part | Location | What it does |
+|---|---|---|
+| **MCP server** `claude` | `.mcp.json`, runs `bridge.cjs mcp --host codex` | Provides `claude.send_message`, `claude.receive_messages`, `claude.status`, `claude.read_messages` and other tools. The collaboration rules live in this MCP server's instructions, so every session loads them |
+| **hooks** × 9 | `hooks/hooks.json` | See the table below |
+| **skill** `partner` | `skills/partner/` | A reference for what each model is good at, its cost and reasoning effort |
+| **App Server interface** | Codex's built-in `codex app-server` (JSON-RPC) | The coordinator uses it to start and resume sessions (`thread/start`, `thread/resume`), deliver messages and start a new turn when a session is idle (`turn/start`), and read session state (`thread/read`, `thread/loaded/list`). A Codex that nxbridge starts in the background is a `codex app-server` process |
+
+What each of the 9 hooks does:
+
+| Hook | What it does |
+|---|---|
+| `SessionStart` / `SessionEnd` | Register the session and restore collaboration facts; clean up when the session ends |
+| `UserPromptSubmit` | Handle pairing codes and configuration confirmations; mark the session as working |
+| `PostToolUse` | Pick up messages from the partner between tool calls |
+| `PreToolUse` (`spawn_agent` only) / `SubagentStop` | Expand and capture `nxref` references so long text doesn't have to be retyped |
+| `PermissionRequest` | Mark the session as waiting for your approval; the Claude status bar shows it |
+| `Interrupt` | Mark the session as paused and cancel pending questions |
+| `Stop` | Mark the session as idle |
+
+### Coordinator
+
+- A background Node.js process. Its runtime files are in `~/.nxbridge/runtime/<version>/`.
+- Both plugins talk to it over a local socket in `~/.nxbridge/run/`. Only you can access that directory, and each connection also needs a random token. The Claude plugin additionally reads status bar information over local `127.0.0.1`.
+- Pairs, messages and events are recorded in `~/.nxbridge/nxbridge.db` (SQLite).
+- It handles pairing and partner selection, chooses how to deliver based on the other side's current state, starts Claude (`claude --bg`) and Codex (`codex app-server`) in the background, detects dropped sessions and recovers them, and sends notices.
+
+### How a message travels
+
+Taking Claude sending to Codex as an example:
+
+1. Claude calls `SendMessage` addressed to `nxbridge:codex`. The mod intercepts the call and hands it to the coordinator, which first saves the message in SQLite.
+2. The coordinator checks Codex's current state:
+   - For a background session or a window that can be woken, it delivers the message into the session through the App Server and starts a new turn if the session is idle.
+   - For a window that can't be woken, it keeps the message until that session next does something (you type in it, or it calls a tool that triggers a hook), and the message is picked up then.
+3. Codex replies with `claude.send_message`, and the coordinator delivers the reply into the Claude window as a native cross-session message.
+4. Every step produces a receipt. Messages whose delivery is uncertain are never resent automatically.
+
 ## Common commands
 
 | Command | What it does |
@@ -252,6 +339,8 @@ Notification rules, Codex's shared background service, troubleshooting and more 
   - `.gitattributes` turns off line-ending conversion for this directory, so a clone on Windows doesn't change the files either.
 - `README.md` / `README.en.md`: this guide in Chinese and English.
 
-## License
+## Author and license
 
-MIT. See [`publish/LICENSE`](publish/LICENSE). Licenses for the bundled third-party dependencies are in [`publish/THIRD-PARTY-NOTICES.md`](publish/THIRD-PARTY-NOTICES.md).
+nxbridge is developed by **nmbot**. This repository hosts the versions nmbot has released, and the files in `publish/` are identical to the author's release zip.
+
+It's licensed under MIT. See [`publish/LICENSE`](publish/LICENSE). Licenses for the bundled third-party dependencies are in [`publish/THIRD-PARTY-NOTICES.md`](publish/THIRD-PARTY-NOTICES.md).
