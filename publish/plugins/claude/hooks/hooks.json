@@ -1,0 +1,1 @@
+{"description":"平等搭档发现、发送、入站观察与会话登记","modules":["./register.js"],"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"node \"${CLAUDE_PLUGIN_ROOT}/bridge.cjs\" hook --host claude","timeout":10}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"node \"${CLAUDE_PLUGIN_ROOT}/bridge.cjs\" hook --host claude","timeout":10}]}]}}

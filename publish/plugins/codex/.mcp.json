@@ -1,0 +1,1 @@
+{"mcpServers":{"claude":{"command":"node","env_vars":["CODEX_HOME"],"args":["${CODEX_PLUGIN_ROOT}/bridge.cjs","mcp","--host","codex"]}}}
