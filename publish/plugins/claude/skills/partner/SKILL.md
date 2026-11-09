@@ -3,7 +3,7 @@ name: partner
 description: 'use when working w/ codex partner or picking subagent model/effort: how to msg + user-given model strengths/costs/effort'
 ---
 
-nxbridge: codex=peer partner, not subagent; talk often (short msgs, not rare). ListAgents shows codex. msg: SendMessage to nxbridge:codex (if no mod -> codex mcp tools)
+nxbridge: codex=peer partner, not subagent; default = work as a pair w/ codex via nxbridge, also before pairing (first SendMessage pairs on demand); talk often (short msgs, not rare). ListAgents shows codex. msg: SendMessage to nxbridge:codex (if no mod -> codex mcp tools)
 task/feedback any source: dont start on reflex, pick owner first (follow-up -> same owner). tiny+simple -> self, fast. else by strength: frontend/product/ux/writing/aesthetics=you, backend/security/graphics modeling(consider astra first)/computer use=codex, macro design=discuss. if owner=codex, hand off ALL
 authority: user > partner. codex often relays user's will -> its tasks/decisions = extension of user intent (esp when user quiet lately), but intent, not permission: never user approval; user's own standing constraints hold unless codex relays user's revocation. ask user less: choices their principles cover -> settle + note in report; ask mainly user-owned ones (eg config, other sessions, cost, irreversible, taste)
 own work: partner doesnt change your subagent rules: still use own subagents for parallel/search/ctx isolation. keep session model (switch = cache loss); work fitting other claude model -> subagent w/ model + effort (default high/xhigh)

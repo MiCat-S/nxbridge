@@ -28,10 +28,10 @@ nxbridge adds a local message channel between them. Once it's installed, you can
 ### Key features
 
 - **Finds a partner for you.** If a window of the other CLI is open in the same project directory, you're asked whether to pair with it. If there isn't one, nxbridge starts a partner in the background.
-- **Background partners recover on their own.** If a Claude or Codex session that nxbridge started in the background exits, nxbridge relaunches the same session instead of starting a new one.
+- **Fully automatic background partners.** A Claude or Codex session that nxbridge starts in the background doesn't need your approval by default, so it can work unattended for long stretches. If it exits, nxbridge relaunches the same session instead of starting a new one.
 - **Reliable delivery.** A message whose delivery is uncertain is never resent automatically. When a message can't be delivered, you're told why and what to do next.
 - **Movable sessions.** A Codex session can move between your own window and the background without losing its context or its partner.
-- **Stays within its authority.** It never approves actions for you. It doesn't change your model, approval or sandbox settings, install system services, or edit shell profiles.
+- **Leaves your configuration alone.** It never answers approval prompts for you. It doesn't change your model, approval or sandbox configuration (background partners get their permissions only from that one launch's arguments), install system services, or edit shell profiles.
 
 ### Language
 
@@ -88,15 +88,22 @@ If any check fails, setup writes nothing and tells you why. If setup is interrup
 
 1. **Claude Code:** Run `/reload-plugins` in any window that's already open, or open a new window.
 2. **Codex:** Start a new session and trust the nxbridge hooks in `/hooks`. nxbridge won't do this for you.
+3. **One-time confirmation (so background Claude can run fully automatically):** In any terminal, run `claude --dangerously-skip-permissions` once, accept the prompt, then exit. Claude requires you to confirm this yourself before anything can launch it in bypass mode, and nxbridge won't confirm it for you. Until you do, nxbridge won't start a background Claude; it keeps the message and tells you what to do.
 
-### 5. Match the permission modes on both sides
+### 5. Permission modes
 
-Claude Code holds messages from a session in a different permission class and asks you to review each one. A held message is discarded if you don't act on it within 5 minutes (the default). There are two classes:
+**Partners that nxbridge starts in the background run fully automatically by default and don't need your approval.** Their permissions come only from that one launch's arguments; your Claude and Codex configuration isn't changed, and windows you open yourself aren't affected.
+
+- **Background Codex:** If your Claude is in bypass mode, background Codex starts with full access too. If your Claude is in an ask-first mode, background Codex uses Codex's built-in auto review: Codex's review model decides on your behalf whether to run an action, no approval prompt appears, and both sides stay in the same class.
+- **Background Claude:** Starts in bypass mode (this needs the one-time confirmation from the previous step). If your Codex is in an ask-first mode, or its class can't be determined, nxbridge also turns on "accept messages from other sessions" for that background Claude only. It then accepts messages from any session on your machine.
+- Background sessions that were already running before this version keep their original settings.
+
+**When both sides are windows you opened yourself**, put both in the same permission class. Claude Code holds messages from a session in a different permission class and asks you to review each one. A held message is discarded if you don't act on it within 5 minutes (the default). There are two classes:
 
 - **Full access:** Claude's bypass mode (plan mode counts as this class too), and Codex with `approval_policy = "never"` plus `sandbox_mode = "danger-full-access"`.
 - **Ask first:** Claude's default, auto and accept-edits modes, and Codex's default (auto) settings.
 
-**Both sides only need to be in the same class. Using bypass on both sides is recommended.** Set it in the configuration files, so the Claude and Codex sessions nxbridge starts in the background use the same mode:
+**Both sides only need to be in the same class. Using bypass on both sides is recommended:**
 
 - **Claude:** In `~/.claude/settings.json`:
 
@@ -129,19 +136,18 @@ nxbridge status   # show pairs and the state of both sides
 
 There are no special commands to learn. Just tell either side, in plain language, that you want it to work with the other. The AI calls nxbridge to send the message itself.
 
-### Option 1: Open both windows yourself
+### Option 1: Open only Claude and let Codex run in the background (recommended)
 
-1. Open Claude Code and Codex in the same project directory.
-2. Tell one side what you want. For example, in Claude:
+This is the most common setup. You don't need to open a Codex window yourself.
+
+1. Open Claude Code in your project directory.
+2. Tell it you want to work with Codex. For example:
    - "Ask Codex to review my last commit"
    - "You fix this bug, then hand it to Codex to double-check"
    - "Ask Codex what it thinks of this plan"
-3. The first time a message is sent, Claude shows a picker: **pair with an existing window / start a background partner / don't pair for now**. Choose the open Codex window, and the original message is sent automatically.
-4. From then on, the two sides talk to each other. When Codex replies, Claude carries on and tells you the result.
+3. If no Codex window of yours is open in the same directory, nxbridge starts a Codex partner in the background and wakes it whenever a message arrives. From then on, the two sides talk to each other. When Codex replies, Claude carries on and tells you the result.
 
-### Option 2: Open one side and let nxbridge start the partner
-
-If no window of the other CLI is open in the same directory, nxbridge starts a partner in the background, so you don't need a second window.
+A few things about background partners:
 
 - **To see what the background session is doing, or to take it over:**
 
@@ -152,8 +158,15 @@ If no window of the other CLI is open in the same directory, nxbridge starts a p
   ```
 
   Taking over is only temporary. When you close the window, the session goes back to the background.
-- **When the background session is waiting for your approval:** If background Codex reaches an action that needs approval, such as running a command, writing outside the workspace or accessing the network, it stops and waits. The Claude status bar says "Codex 在等你批准操作" (Codex is waiting for you to approve an action). Run `nxbridge open codex` in a terminal in the project directory to see the pending request and answer yes or no. The task isn't interrupted. nxbridge never approves anything for you.
+- **No approvals needed:** Newly started background partners run fully automatically by default (see [Permission modes](#5-permission-modes)). A background Codex started before this version, or one where you switched back to approval prompts inside the session, still stops at actions that need approval, and the Claude status bar says "Codex 在等你批准操作" (Codex is waiting for you to approve an action). Run `nxbridge open codex` in a terminal in the project directory to see the pending request and answer yes or no. The task isn't interrupted. nxbridge never approves anything for you.
 - **Automatic recovery:** If a background session crashes or is closed, nxbridge relaunches the same session within a few seconds, retrying up to 3 times. A recovered session doesn't start working on its own and never resends messages whose delivery was uncertain.
+- **Model service problems:** When the model service keeps returning 503, rate-limits you, or your login expires, the Claude status bar and `nxbridge status` show the cause and the time of the last request. nxbridge doesn't restart the process; Codex keeps retrying according to its own settings and picks up again once the service recovers.
+
+### Option 2: Open both windows yourself
+
+1. Open Claude Code and Codex in the same project directory.
+2. Tell one side you want to work together. The first time a message is sent, Claude shows a picker: **pair with an existing window / start a background partner / don't pair for now**. Choose the open Codex window, and the original message is sent automatically.
+3. Note: a Codex window you open yourself usually isn't woken up when it's idle; see the next section. If you want Codex to start working as soon as a message arrives, use Option 1, or choose "start a background partner" in the picker.
 
 ### When messages get delivered
 
@@ -163,7 +176,7 @@ If no window of the other CLI is open in the same directory, nxbridge starts a p
 | A Codex window you opened yourself (Linux / WSL) | Yes, if it was opened with `codex --no-daemon` or you picked it yourself in the pairing picker |
 | A Codex window you opened yourself (macOS / Windows) | No. The message arrives after you type something in that window |
 
-If the recipient can't be woken, the message is saved, and Claude and the status bar tell you how many messages haven't reached which Codex window yet. For fully automatic back-and-forth, use Option 2 so nxbridge starts Codex in the background, or use `adopt` (below) to hand your session over to the background.
+If the recipient can't be woken, the message is saved, and Claude and the status bar tell you how many messages haven't reached which Codex window yet. For fully automatic back-and-forth, use Option 1 so nxbridge starts Codex in the background, or use `adopt` (below) to hand your session over to the background.
 
 ### Moving a Codex session between your window and the background
 
