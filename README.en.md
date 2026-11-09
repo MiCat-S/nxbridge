@@ -2,9 +2,9 @@
 
 [简体中文](README.md) | **English**
 
-Lets **Claude Code** and **Codex CLI** on the same computer message each other and work together as equal peers.
+nxbridge lets **Claude Code** and **Codex CLI** on the same computer message each other and work together as equal peers. Tell either side something like "ask Codex to review this change", and the task goes to the other side, with the result coming back automatically. It plugs in only through the CLIs' official plugins, hooks, MCP and mod, never modifies the CLIs, and keeps all traffic on your machine. If the other side isn't open, it starts a partner in the background and recovers dropped sessions automatically.
 
-Author: **nmBot**
+Author: **nmBot** · MIT license
 
 ## Introduction
 
