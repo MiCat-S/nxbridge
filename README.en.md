@@ -51,8 +51,8 @@ nxbridge adds a local message channel between them. Once it's installed, you can
 - If either CLI is older than the tested versions, the setup check warns you, but it may still work. Upgrade first if you can.
 - In each project directory you plan to use, open `claude` and `codex` once and accept each one's directory trust prompt. In a directory that hasn't been trusted, background sessions stop and wait for you.
 - Platforms:
-  - **macOS:** In daily use on a real Mac running macOS 27 (Apple silicon). See [Using it on macOS](#using-it-on-macos) for what to watch out for. The author's official verification isn't finished yet.
-  - **Windows and WSL (Ubuntu 22.04):** Verified by the author.
+  - **macOS:** Verified on a real Mac running macOS 27 (Apple silicon) and in daily use. See [Using it on macOS](#using-it-on-macos) for what to watch out for.
+  - **Windows and WSL (Ubuntu 22.04):** Verified.
   - **Other Linux distributions:** Should work, but haven't been tested separately.
 
 ### 2. Download
@@ -228,7 +228,7 @@ Things to watch out for on macOS:
 - **Background Codex still runs in Codex's shared background service.** On Linux and Windows, nxbridge runs background Codex on its own. On macOS this hasn't changed yet. nxbridge never stops or restarts that service.
 - **Before nxbridge can start Claude in the background, trust the project directory from the command line.** Run `claude` once in that directory and accept the trust prompt. Trusting it only in the Claude desktop app isn't enough.
 - **The ChatGPT app may hold a Codex session.** If `nxbridge adopt codex` says the session is in use, close that session in the ChatGPT app first. If it still says so, quit the ChatGPT app (⌘Q).
-- **If something goes wrong:** Send the full output of `nxbridge doctor` to the author. To help the author collect macOS verification evidence, see [`publish/tools/macos-validation.md`](publish/tools/macos-validation.md) (in Chinese).
+- **If something goes wrong:** Send the full output of `nxbridge doctor` to the author.
 
 ## How it's built
 

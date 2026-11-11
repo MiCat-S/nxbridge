@@ -49,8 +49,8 @@ nxbridge 在两者之间搭一条本机消息通道。装好后，你只要跟�
 - 两家 CLI 比上面的版本旧时，安装检查会提示，但不一定不能用；能升级的话建议先升级。
 - 在要用的项目目录里，先分别打开一次 `claude` 和 `codex`，接受各自的目录信任提示。没信任过的目录，后台会话会停下来等你处理。
 - 平台：
-  - **macOS：** 已在 macOS 27（Apple 芯片）实机上日常使用，注意事项见下文“[在 macOS 上使用](#在-macos-上使用)”。作者的官方验收还没完成。
-  - **Windows、WSL（Ubuntu 22.04）：** 作者已验收。
+  - **macOS：** 已在 macOS 27（Apple 芯片）实机上验收，并在日常使用，注意事项见下文“[在 macOS 上使用](#在-macos-上使用)”。
+  - **Windows、WSL（Ubuntu 22.04）：** 已验收。
   - **其他 Linux 发行版：** 应该可以用，但没有单独测过。
 
 ### 2. 下载
@@ -226,7 +226,7 @@ nxbridge release codex   # 长期交还给你自己的窗口：等后台这一�
 - **后台 Codex 仍然跑在 Codex 的共用后台服务里。** Linux 和 Windows 上，nxbridge 会让后台 Codex 单独运行；macOS 上暂时保持原样。nxbridge 不会停止或重启这个服务。
 - **后台启动 Claude 前，要先在命令行里信任项目目录。** 在那个目录里运行一次 `claude`，接受信任提示即可。只在 Claude 桌面应用里信任过不算。
 - **ChatGPT 应用可能占着 Codex 会话。** `nxbridge adopt codex` 提示会话被占用时，先在 ChatGPT 应用里关掉这个会话；还不行就退出 ChatGPT 应用（⌘Q）。
-- **遇到问题：** 把 `nxbridge doctor` 的完整输出反馈给作者。想帮作者补齐 macOS 的验收证据，见 [`publish/tools/macos-validation.md`](publish/tools/macos-validation.md)。
+- **遇到问题：** 把 `nxbridge doctor` 的完整输出反馈给作者。
 
 ## 实现原理
 
