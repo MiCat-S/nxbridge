@@ -187,6 +187,12 @@ nxbridge release codex   # 长期交还给你自己的窗口：等后台这一�
 
 你自己的 Codex 窗口关掉后，配对不会断。下次 Claude 发信时，会让你选择：在后台继续原会话 / 等我重新打开窗口 / 新建后台 Codex / 解除配对。
 
+同一个会话同一时刻只能在一处打开。关掉窗口几秒后，就能换 `codex resume`、`codex --no-daemon` 或 ChatGPT 应用重新打开，照常接回原来的搭档。打开时如果 Codex 提示 “This conversation is open in another app”，说明它此刻还在别处使用：
+
+- 别的窗口还开着它：关掉那个窗口，再回来按 R。
+- 它正在干活，或者在等你批准、回答：等这一轮结束，或回原窗口处理完。
+- 它是正在运行的后台搭档：用 `nxbridge open codex` 临时接手，或用 `nxbridge release codex` 交还给你。
+
 ### 换搭档和暂停
 
 - **换搭档或解除配对：** 在 Claude 里输入 `/nxbridge pair`（或直接说"换个搭档"），在 Codex 里输入 `nxbridge pair`。

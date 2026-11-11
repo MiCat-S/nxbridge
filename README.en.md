@@ -189,6 +189,12 @@ nxbridge release codex   # hand back to your own window for good; it waits for t
 
 If you close your own Codex window, the pair stays. The next time Claude sends a message, you choose: continue the session in the background / wait for me to reopen the window / start a new background Codex / unpair.
 
+A session can be open in only one place at a time. A few seconds after you close a window, you can reopen the session with `codex resume`, `codex --no-daemon` or the ChatGPT app, and it reconnects to the same partner. If Codex says "This conversation is open in another app" when you open it, the session is still in use somewhere else:
+
+- Another window still has it open: close that window, then come back and press R.
+- It's in the middle of a task, or waiting for your approval or answer: wait for the turn to finish, or deal with it in the original window.
+- It's a background partner that's running: take it over temporarily with `nxbridge open codex`, or hand it back to yourself with `nxbridge release codex`.
+
 ### Changing partners and pausing
 
 - **Change partners or unpair:** In Claude, type `/nxbridge pair` (or just say "switch partners"). In Codex, type `nxbridge pair`.
