@@ -49,7 +49,7 @@ nxbridge 在两者之间搭一条本机消息通道。装好后，你只要跟�
 - 两家 CLI 比上面的版本旧时，安装检查会提示，但不一定不能用；能升级的话建议先升级。
 - 在要用的项目目录里，先分别打开一次 `claude` 和 `codex`，接受各自的目录信任提示。没信任过的目录，后台会话会停下来等你处理。
 - 平台：
-  - **macOS：** 已在 macOS 27（Apple 芯片）实机上验收，并在日常使用，注意事项见下文“[在 macOS 上使用](#在-macos-上使用)”。
+  - **macOS：** 已在 macOS 27（Apple 芯片）实机上日常使用；窗口唤醒和后台接管有实测记录，本版新增修复尚未全部完成实机验证，详见“[在 macOS 上使用](#在-macos-上使用)”。
   - **Windows、WSL（Ubuntu 22.04）：** 已验收。
   - **其他 Linux 发行版：** 应该可以用，但没有单独测过。
 
@@ -117,7 +117,7 @@ node nxbridge.mjs setup             # 正式安装
   sandbox_mode = "danger-full-access"
   ```
 
-类别不一致时，Claude 状态栏会直接告诉你该怎么改。实在不想统一，也可以每次在 Claude 的审核框里手动放行。
+类别不一致时，配对时就会提示，Claude 状态栏会显示等待审核和超时作废的消息数，并告诉发信方哪些消息没有送达。实在不想统一，也可以每次在 Claude 的审核框里手动放行。
 
 注意：Codex 的审批和沙箱设置改了以后，只对新开的会话生效。
 
@@ -158,27 +158,30 @@ nxbridge status   # 查看配对和双方状态
   接手只是临时借用，关掉窗口就交还给后台。
 - **不需要你批准：** 新启动的后台搭档默认全自动运行（见“[权限模式](#5-权限模式)”）。本版之前启动的后台 Codex，或者你在会话里改回了需要批准的设置时，碰到要批准的操作会停下来，Claude 状态栏会提示“Codex 在等你批准操作”。在项目目录的终端里运行 `nxbridge open codex`，就能看到那条审批并选择“是”或“否”，任务不会中断。nxbridge 不会替你批准。
 - **掉线自动恢复：** 后台会话崩溃或被关掉后，nxbridge 会在几秒内按原会话重新拉起，最多自动重试 3 次。恢复后不会自动开始干活，也不会重发结果不明的消息。
-- **模型服务出问题：** 比如一直返回 503、限流、登录失效时，Claude 状态栏和 `nxbridge status` 会写出原因和最近一次请求的时间。nxbridge 不会重启进程，Codex 按自己的设置继续重试，服务恢复后自动接着做。
+- **模型服务出问题：** 比如一直返回 503、限流、登录失效时，Claude 状态栏和 `nxbridge status` 会写出原因和最近一次请求的时间。nxbridge 不会重启进程，Codex 按自己的设置继续重试；重试用完、这一轮失败并停下后，30 秒后叫醒搭档一次，由它判断接着做、接手还是告诉你。限流、额度或登录问题不会因此自动解决。
 
 ### 方式二：两个窗口都自己开
 
 1. 在同一个项目目录里，分别打开 Claude Code 和 Codex。
 2. 跟其中一边说要协作。第一次发信时，Claude 会弹出选择框：**配对现有窗口 / 新建后台搭档 / 暂不配对**。选现有的 Codex 窗口，原消息会自动发出。
-3. 注意：你自己开的 Codex 窗口空闲时通常不会被主动叫醒，见下一节。想让 Codex 收到消息就开始干活，就用方式一，或者在选择框里选“新建后台搭档”。
+3. 你亲手选的 Codex 窗口，在 nxbridge 能确认它仍开着且空闲时，可以收到消息后自动开始工作；具体条件见下一节。也可以用方式一，或者在选择框里选“新建后台搭档”。
 
 ### 消息什么时候能送到
 
 | 接收方 | 空闲时能否被叫醒 |
 |---|---|
 | nxbridge 在后台启动的会话 | 能，有消息就会叫醒 |
-| 你自己开的 Codex 窗口（Linux / WSL） | 能：用 `codex --no-daemon` 打开的窗口，或配对时你在选择框里亲手选的窗口 |
-| 你自己开的 Codex 窗口（macOS / Windows） | 不能，要你在那个窗口里输入一次才会收到 |
+| 用 `codex --no-daemon` 打开的窗口 | 能 |
+| 使用共用后台服务的 Codex 终端窗口（macOS / Windows / Linux / WSL） | 配对时你亲手选过它，且 nxbridge 能确认同一配置目录的终端窗口仍开着时，能 |
+| 其他无法确认仍开着的 Codex 窗口 | 不能；在那个 Codex 窗口里输入 `nxbridge pickup` 或 `nxbridge 收信` 取件 |
 
-叫不醒时，消息会先存着，Claude 和状态栏会点名告诉你"有 N 条消息还没送到 Codex 窗口「…」"。想让它全自动往来，用方式一让 nxbridge 在后台启动 Codex，或者用下面的 `adopt` 把你的会话交给后台。
+叫不醒时，消息会先存着，Claude 和状态栏会点名告诉你"有 N 条消息还没送到 Codex 窗口「…」"，并给出取件或重新打开原会话的命令。在 Codex 窗口里输入 `nxbridge pickup` 只表示取信，不表示回答问题或批准操作。想让它全自动往来，用方式一让 nxbridge 在后台启动 Codex，或者用下面的 `adopt` 把你的会话交给后台。
 
 ### Codex 会话在窗口和后台之间转
 
 一个积累了很多上下文的 Codex 会话，可以在你自己的窗口（包括 ChatGPT 应用）和后台之间来回转，会话和搭档都不变：
+
+在系统终端里运行以下命令；远程连接、没有交互终端时，也可以在配对选择框里选“在后台继续原会话”。
 
 ```sh
 nxbridge adopt codex     # 交给后台：窗口还开着时会等你关掉再转
@@ -187,7 +190,9 @@ nxbridge release codex   # 长期交还给你自己的窗口：等后台这一�
 
 你自己的 Codex 窗口关掉后，配对不会断。下次 Claude 发信时，会让你选择：在后台继续原会话 / 等我重新打开窗口 / 新建后台 Codex / 解除配对。
 
-同一个会话同一时刻只能在一处打开。关掉窗口几秒后，就能换 `codex resume`、`codex --no-daemon` 或 ChatGPT 应用重新打开，照常接回原来的搭档。打开时如果 Codex 提示 “This conversation is open in another app”，说明它此刻还在别处使用：
+转到后台时，nxbridge 会沿用原会话的 Codex 程序，或同一安装渠道更新后的入口，不会换成其他渠道的旧版。找不到合适程序时会保留会话和消息，并列出检查过的程序、版本和处理方法；配置或程序更新后自动重新尝试。
+
+同一个会话同一时刻只能在一处打开。关掉窗口后，用共用后台服务的会话默认再等 60 秒才释放，实际常要一两分钟；nxbridge 自己的后台在没有窗口和任务后会立即释放，一般只要几秒。之后就能换 `codex resume`、`codex --no-daemon` 或 ChatGPT 应用重新打开，照常接回原来的搭档。打开时如果 Codex 提示 “This conversation is open in another app”，说明它此刻还在别处使用：
 
 - 别的窗口还开着它：关掉那个窗口，再回来按 R。
 - 它正在干活，或者在等你批准、回答：等这一轮结束，或回原窗口处理完。
@@ -222,11 +227,12 @@ nxbridge release codex   # 长期交还给你自己的窗口：等后台这一�
 
 在 macOS 上要注意这几点：
 
-- **自己开的 Codex 窗口不会被主动叫醒。** Codex 0.166 起默认把会话交给共用后台服务运行，发给你自己窗口的消息要等你在那个窗口输入一次才会送到。想让两边全自动往来，就让 nxbridge 在后台启动 Codex，或者用 `nxbridge adopt codex` 把会话交给后台。
-- **后台 Codex 仍然跑在 Codex 的共用后台服务里。** Linux 和 Windows 上，nxbridge 会让后台 Codex 单独运行；macOS 上暂时保持原样。nxbridge 不会停止或重启这个服务。
+- **自己开的 Codex 终端窗口可以被叫醒。** 配对时你亲手选过它、nxbridge 能确认窗口仍开着，且会话空闲时，消息会直接送进去。这项行为已在 Codex 0.167.1 / 0.167.2 上实测，daemon 自动升级、终端重新连接后也能继续唤醒。确认不了时，仍需在那个 Codex 窗口里输入 `nxbridge pickup` 取件。
+- **后台 Codex 单独运行。** macOS 使用只有本人能访问的本机 socket。新版修复了 socket 被 Codex 换成链接后无法识别自有后台、解除配对后停不掉的问题；这项修复尚未完成 Mac 实机验证。nxbridge 不会停止或重启你的共用后台服务。
+- **本版还有两项修复待实机验证：** 手改配置文件后自动生效；亲手选过的窗口关闭后，用 `codex resume <会话ID>` 重新打开并空闲时，自动接收积压消息。
 - **后台启动 Claude 前，要先在命令行里信任项目目录。** 在那个目录里运行一次 `claude`，接受信任提示即可。只在 Claude 桌面应用里信任过不算。
 - **ChatGPT 应用可能占着 Codex 会话。** `nxbridge adopt codex` 提示会话被占用时，先在 ChatGPT 应用里关掉这个会话；还不行就退出 ChatGPT 应用（⌘Q）。
-- **遇到问题：** 把 `nxbridge doctor` 的完整输出反馈给作者。
+- **遇到问题：** 把 `nxbridge doctor` 的完整输出反馈给作者。实测记录和待验证步骤见 [`publish/tools/macos-validation.md`](publish/tools/macos-validation.md)。
 
 ## 实现原理
 
@@ -329,6 +335,7 @@ mod 做的事：
 | `nxbridge open claude\|codex` | 接手 nxbridge 在后台启动的会话 |
 | `nxbridge adopt codex` | 把 Codex 会话交给后台 |
 | `nxbridge release codex` | 把后台 Codex 会话交还给你自己的窗口 |
+| `nxbridge retire --member <成员ID>` | 重新核验并回收已解除配对的自有后台；`doctor` 的 `retirements` 列出相关记录 |
 | `nxbridge on` / `off` | 打开 / 关闭某一边 |
 | `nxbridge config list` | 查看配置 |
 
@@ -340,7 +347,7 @@ mod 做的事：
 node nxbridge.mjs update --from .
 ```
 
-更新结束时会列出这次需要做的事。通常是在开着的 Claude 窗口里执行 `/reload-plugins`；Codex 插件有变化时，还要在 `/hooks` 里重新信任。更新时正在工作的会话不会被打断。
+更新结束时会列出这次需要做的事。通常是在开着的 Claude 窗口里执行 `/reload-plugins`；远程连接无法执行时，回到电脑上执行或重新打开窗口，再用 `/resume` 回到原会话。Codex 插件有变化时，还要在 `/hooks` 里重新信任。更新时正在工作的会话不会被打断。
 
 ## 卸载
 
@@ -354,7 +361,7 @@ nxbridge uninstall --purge     # 连同 ~/.nxbridge 一起删除
 
 ## 配置
 
-- 配置文件在 `~/.nxbridge/config.toml`，需要时自己创建，nxbridge 不会改动它。
+- 配置文件在 `~/.nxbridge/config.toml`，需要时自己创建，nxbridge 不会改动它。手动修改后几秒内自动生效，无需 `reload`；文件写错时继续使用上一份有效配置，改好后自动读取。
 - 也可以用 `nxbridge config list` / `nxbridge config set <键> <值>` 修改。
 - 平时通过 wrapper 启动 Claude 或 Codex 时，可以用 `nxbridge setup --claude-command <命令> --claude-command-arg <参数>` 指定后台启动用的命令。
 

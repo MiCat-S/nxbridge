@@ -51,7 +51,7 @@ nxbridge adds a local message channel between them. Once it's installed, you can
 - If either CLI is older than the tested versions, the setup check warns you, but it may still work. Upgrade first if you can.
 - In each project directory you plan to use, open `claude` and `codex` once and accept each one's directory trust prompt. In a directory that hasn't been trusted, background sessions stop and wait for you.
 - Platforms:
-  - **macOS:** Verified on a real Mac running macOS 27 (Apple silicon) and in daily use. See [Using it on macOS](#using-it-on-macos) for what to watch out for.
+  - **macOS:** In daily use on a real Mac running macOS 27 (Apple silicon). Window wake-up and background handoff have real-device test records; not all fixes in this build have been verified on a Mac yet. See [Using it on macOS](#using-it-on-macos).
   - **Windows and WSL (Ubuntu 22.04):** Verified.
   - **Other Linux distributions:** Should work, but haven't been tested separately.
 
@@ -119,7 +119,7 @@ If any check fails, setup writes nothing and tells you why. If setup is interrup
   sandbox_mode = "danger-full-access"
   ```
 
-If the classes don't match, the Claude status bar tells you what to change. If you'd rather not match them, you can release each held message by hand in Claude's review dialog.
+If the classes don't match, you're warned when pairing. The Claude status bar shows how many messages are awaiting review or have expired, and the sender is told which messages weren't delivered. If you'd rather not match the classes, you can release each held message by hand in Claude's review dialog.
 
 Note: changes to Codex's approval and sandbox settings only apply to new sessions.
 
@@ -160,27 +160,30 @@ A few things about background partners:
   Taking over is only temporary. When you close the window, the session goes back to the background.
 - **No approvals needed:** Newly started background partners run fully automatically by default (see [Permission modes](#5-permission-modes)). A background Codex started before this version, or one where you switched back to approval prompts inside the session, still stops at actions that need approval, and the Claude status bar says "Codex 在等你批准操作" (Codex is waiting for you to approve an action). Run `nxbridge open codex` in a terminal in the project directory to see the pending request and answer yes or no. The task isn't interrupted. nxbridge never approves anything for you.
 - **Automatic recovery:** If a background session crashes or is closed, nxbridge relaunches the same session within a few seconds, retrying up to 3 times. A recovered session doesn't start working on its own and never resends messages whose delivery was uncertain.
-- **Model service problems:** When the model service keeps returning 503, rate-limits you, or your login expires, the Claude status bar and `nxbridge status` show the cause and the time of the last request. nxbridge doesn't restart the process; Codex keeps retrying according to its own settings and picks up again once the service recovers.
+- **Model service problems:** When the model service keeps returning 503, rate-limits you, or your login expires, the Claude status bar and `nxbridge status` show the cause and the time of the last request. nxbridge doesn't restart the process; Codex keeps retrying according to its own settings. If retries run out and the turn fails and stops, nxbridge wakes the partner once after 30 seconds to decide whether to continue, take over or tell you. This doesn't fix rate limits, exhausted quota or login problems.
 
 ### Option 2: Open both windows yourself
 
 1. Open Claude Code and Codex in the same project directory.
 2. Tell one side you want to work together. The first time a message is sent, Claude shows a picker: **pair with an existing window / start a background partner / don't pair for now**. Choose the open Codex window, and the original message is sent automatically.
-3. Note: a Codex window you open yourself usually isn't woken up when it's idle; see the next section. If you want Codex to start working as soon as a message arrives, use Option 1, or choose "start a background partner" in the picker.
+3. A Codex window you picked yourself can start working when a message arrives if nxbridge can confirm it's still open and idle; see the next section for the conditions. You can also use Option 1 or choose "start a background partner" in the picker.
 
 ### When messages get delivered
 
 | Recipient | Woken up when idle? |
 |---|---|
 | A session nxbridge started in the background | Yes, whenever a message arrives |
-| A Codex window you opened yourself (Linux / WSL) | Yes, if it was opened with `codex --no-daemon` or you picked it yourself in the pairing picker |
-| A Codex window you opened yourself (macOS / Windows) | No. The message arrives after you type something in that window |
+| A window opened with `codex --no-daemon` | Yes |
+| A Codex terminal window using the shared background service (macOS / Windows / Linux / WSL) | Yes, if you picked it yourself when pairing and nxbridge can confirm a terminal window using the same configuration directory is still open |
+| Other Codex windows that can't be confirmed open | No; type `nxbridge pickup` or `nxbridge 收信` in that Codex window to collect messages |
 
-If the recipient can't be woken, the message is saved, and Claude and the status bar tell you how many messages haven't reached which Codex window yet. For fully automatic back-and-forth, use Option 1 so nxbridge starts Codex in the background, or use `adopt` (below) to hand your session over to the background.
+If the recipient can't be woken, the message is saved, and Claude and the status bar tell you how many messages haven't reached which Codex window yet, with commands to collect them or reopen the original session. Typing `nxbridge pickup` in Codex only collects messages; it doesn't answer a question or approve an action. For fully automatic back-and-forth, use Option 1 so nxbridge starts Codex in the background, or use `adopt` (below) to hand your session over to the background.
 
 ### Moving a Codex session between your window and the background
 
 A Codex session with a lot of context can move between your own window (including the ChatGPT app) and the background. It keeps the same session and the same partner:
+
+Run the following commands in a system terminal. When connected remotely without an interactive terminal, you can instead choose to continue the original session in the background in the pairing picker.
 
 ```sh
 nxbridge adopt codex     # hand over to the background; if the window is still open, it waits until you close it
@@ -189,7 +192,9 @@ nxbridge release codex   # hand back to your own window for good; it waits for t
 
 If you close your own Codex window, the pair stays. The next time Claude sends a message, you choose: continue the session in the background / wait for me to reopen the window / start a new background Codex / unpair.
 
-A session can be open in only one place at a time. A few seconds after you close a window, you can reopen the session with `codex resume`, `codex --no-daemon` or the ChatGPT app, and it reconnects to the same partner. If Codex says "This conversation is open in another app" when you open it, the session is still in use somewhere else:
+For a background handoff, nxbridge keeps the session's original Codex executable or an updated entry point from the same installation channel. It doesn't substitute an older copy from another channel. If no suitable executable is found, the session and messages are kept, and the checked paths, versions and remedy are shown. A configuration or executable update triggers another attempt automatically.
+
+A session can be open in only one place at a time. After you close a window, the shared background service waits another 60 seconds by default before releasing it; in practice this often takes a minute or two. nxbridge's own background releases it as soon as there are no connected windows or tasks, usually within a few seconds. You can then reopen it with `codex resume`, `codex --no-daemon` or the ChatGPT app, and it reconnects to the same partner. If Codex says "This conversation is open in another app" when you open it, the session is still in use somewhere else:
 
 - Another window still has it open: close that window, then come back and press R.
 - It's in the middle of a task, or waiting for your approval or answer: wait for the turn to finish, or deal with it in the original window.
@@ -224,11 +229,12 @@ nxbridge is in daily use on this setup:
 
 Things to watch out for on macOS:
 
-- **Codex windows you open yourself aren't woken up.** Since Codex 0.166, sessions run in a shared background service by default, so a message to your own window arrives only after you type something in that window. For fully automatic back-and-forth, let nxbridge start Codex in the background, or hand your session over with `nxbridge adopt codex`.
-- **Background Codex still runs in Codex's shared background service.** On Linux and Windows, nxbridge runs background Codex on its own. On macOS this hasn't changed yet. nxbridge never stops or restarts that service.
+- **Codex terminal windows you open yourself can be woken.** If you picked the window yourself when pairing, nxbridge can confirm it's still open, and the session is idle, messages are delivered directly. This was tested on Codex 0.167.1 / 0.167.2, including after daemon upgrades and terminal reconnections. If nxbridge can't confirm the window is open, type `nxbridge pickup` in that Codex window to collect messages.
+- **Background Codex runs separately.** On macOS it uses a local socket accessible only to your account. This build fixes recognition of owned background processes after Codex replaces the socket with a symlink, which previously prevented cleanup after unpairing. This fix hasn't been verified on a real Mac yet. nxbridge never stops or restarts your shared background service.
+- **Two more fixes still need Mac verification:** automatic reload after manually editing the configuration file, and automatic delivery of queued messages once a previously selected window is reopened with `codex resume <session ID>` and becomes idle.
 - **Before nxbridge can start Claude in the background, trust the project directory from the command line.** Run `claude` once in that directory and accept the trust prompt. Trusting it only in the Claude desktop app isn't enough.
 - **The ChatGPT app may hold a Codex session.** If `nxbridge adopt codex` says the session is in use, close that session in the ChatGPT app first. If it still says so, quit the ChatGPT app (⌘Q).
-- **If something goes wrong:** Send the full output of `nxbridge doctor` to the author.
+- **If something goes wrong:** Send the full output of `nxbridge doctor` to the author. Test records and remaining verification steps are in [`publish/tools/macos-validation.md`](publish/tools/macos-validation.md) (in Chinese).
 
 ## How it's built
 
@@ -331,6 +337,7 @@ Taking Claude sending to Codex as an example:
 | `nxbridge open claude\|codex` | Take over a session nxbridge started in the background |
 | `nxbridge adopt codex` | Hand a Codex session over to the background |
 | `nxbridge release codex` | Hand a background Codex session back to your own window |
+| `nxbridge retire --member <member ID>` | Recheck and clean up an owned background process after unpairing; `doctor` lists records under `retirements` |
 | `nxbridge on` / `off` | Turn one side on / off |
 | `nxbridge config list` | Show the configuration |
 
@@ -342,7 +349,7 @@ Download and unzip the new version, then run this in its folder:
 node nxbridge.mjs update --from .
 ```
 
-When the update finishes, it lists what you need to do. Usually that's running `/reload-plugins` in the Claude windows you have open. If the Codex plugin changed, you also need to trust the hooks again in `/hooks`. Sessions that are working during the update aren't interrupted.
+When the update finishes, it lists what you need to do. Usually that's running `/reload-plugins` in the Claude windows you have open. If the command isn't available over a remote connection, run it on the computer or reopen the window and use `/resume` to return to the same conversation. If the Codex plugin changed, you also need to trust the hooks again in `/hooks`. Sessions that are working during the update aren't interrupted.
 
 ## Uninstalling
 
@@ -356,7 +363,7 @@ Neither CLI's own session history is ever deleted.
 
 ## Configuration
 
-- The configuration file is `~/.nxbridge/config.toml`. Create it if you need it. nxbridge never modifies it.
+- The configuration file is `~/.nxbridge/config.toml`. Create it if you need it. nxbridge never modifies it. Manual edits take effect within a few seconds without `reload`; invalid edits leave the last valid configuration active, and corrected files are read automatically.
 - You can also use `nxbridge config list` and `nxbridge config set <key> <value>`.
 - If you normally start Claude or Codex through a wrapper, set the command used for background launches with `nxbridge setup --claude-command <command> --claude-command-arg <argument>`.
 
