@@ -71,7 +71,7 @@ jobs:
 
   mac-extended:
     name: advisory / mac extended native (${{ matrix.group }})
-    if: github.event_name == 'workflow_dispatch' && inputs.extended
+    if: github.event_name != 'workflow_dispatch' || inputs.extended
     needs: build
     continue-on-error: true
     strategy:
