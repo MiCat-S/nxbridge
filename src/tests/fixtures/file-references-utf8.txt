@@ -1,0 +1,1 @@
+请查看 src/integration/mcp/questions.ts:12 和 docs/behavior.md，目录 plugins/claude/。

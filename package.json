@@ -1,0 +1,38 @@
+{
+  "name": "nxbridge",
+  "version": "0.1.1",
+  "description": "Claude Code 与 Codex CLI 的本地平等搭档通信",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0 <27"
+  },
+  "bin": {
+    "nxbridge": "publish/nxbridge.mjs"
+  },
+  "license": "MIT",
+  "files": [
+    "publish"
+  ],
+  "scripts": {
+    "build": "node tools/sync-version.mjs && node tools/mod-revision.mjs && node tools/identity-revision.mjs && tsc -p tsconfig.json",
+    "build:publish": "node tools/build-publish.mjs",
+    "pack:zip": "node tools/pack-publish.mjs",
+    "test": "npm run build && npm run build:publish && node tools/run-tests.mjs --test --test-timeout=30000 \"dist/tests/**/*.test.js\"",
+    "test:native": "npm run build && npm run build:publish && node tools/run-tests.mjs --test --test-concurrency=1 --test-timeout=180000 \"dist/native-tests/**/*.test.js\"",
+    "test:native:target": "npm run build && npm run build:publish && node tools/test-native-version.mjs 0.166.0",
+    "check": "node tools/sync-version.mjs --check && node tools/mod-revision.mjs --check && node tools/identity-revision.mjs --check && tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build:publish"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "smol-toml": "1.9.1",
+    "ws": "8.22.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "@types/node": "24.10.1",
+    "@types/ws": "8.18.1",
+    "typescript": "5.9.3"
+  }
+}

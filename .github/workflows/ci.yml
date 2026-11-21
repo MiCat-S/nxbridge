@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'ci/**']
+  workflow_dispatch:
+    inputs:
+      extended:
+        description: Also run the extended macOS native suites
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DISABLE_AUTOUPDATER: '1'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build
+
+  mac-unit:
+    name: mac gate / unit
+    needs: build
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-fund --no-audit
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: build
+      - run: node tools/run-tests.mjs --test --test-timeout=30000 "dist/tests/**/*.test.js"
+
+  mac-native:
+    name: mac gate / native
+    needs: build
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-fund --no-audit
+      - uses: ./.github/actions/official-clis
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: build
+      - run: node tools/run-tests.mjs --test --test-concurrency=1 --test-timeout=180000 dist/native-tests/codex.test.js dist/native-tests/session-hosting.test.js dist/native-tests/isolation-options.test.js
+
+  mac-extended:
+    name: advisory / mac extended native (${{ matrix.group }})
+    if: github.event_name == 'workflow_dispatch' && inputs.extended
+    needs: build
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: claude
+            files: dist/native-tests/managed-isolation.test.js dist/native-tests/codex-client-identity.test.js dist/native-tests/sdk-user-prompt.test.js dist/native-tests/claude.test.js
+          - group: daemon
+            files: dist/native-tests/daemon-wake-probe.test.js dist/native-tests/daemon-codex.test.js
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-fund --no-audit
+      - uses: ./.github/actions/official-clis
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: build
+      - run: node tools/run-tests.mjs --test --test-concurrency=1 --test-timeout=180000 ${{ matrix.files }}
+
+  advisory-unit:
+    name: advisory / unit (${{ matrix.os }}, Node ${{ matrix.node }})
+    needs: build
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: 24
+          - os: ubuntu-latest
+            node: 26
+          - os: windows-latest
+            node: 24
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --no-fund --no-audit
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: build
+      - run: node tools/run-tests.mjs --test --test-timeout=30000 "dist/tests/**/*.test.js"

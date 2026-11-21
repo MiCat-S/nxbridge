@@ -1,0 +1,18 @@
+import {z} from 'zod';
+import {nativeSessionSchema} from '../../integration/mod/mod-protocol.js';
+
+export const text=z.string().min(1).max(262144);
+export const host=z.enum(['claude','codex']);
+export const actorSchema=z.object({host,memberId:text.optional(),sessionId:text,callId:text,via:z.string().optional(),turnId:text.optional(),binding:z.object({key:text,epoch:text}).optional()});
+export const targetSchema=z.object({actor:actorSchema.optional(),pair_id:text.optional(),peer_id:text.optional(),session_id:text.optional(),native:z.object({host,pid:z.number().int().positive(),procStart:text}).optional()});
+export const restartSchema=targetSchema.extend({partner:z.literal(true).optional()});
+export const profileSchema=z.object({model:z.string().min(1).nullable().optional(),effort:z.union([z.string().min(1),z.number().finite()]).nullable().optional()});
+export const processSchema=z.object({pid:z.number().int().positive(),procStart:text});
+                                         
+export const hookClientSchema=z.object({hook_pid:z.number().int().positive(),config_home:text,cwd:text,started_at:z.number().finite(),elapsed_ms:z.number().finite().nonnegative(),input:z.record(z.string(),z.unknown())}).strict();
+export const mcpHookClientSchema=hookClientSchema.extend({thread_id:text});
+export const claudeHookClientSchema=hookClientSchema.extend({messaging_socket:text.optional(),owned_launch:z.object({peerId:z.string().uuid(),launchId:z.string().uuid()}).optional()});
+export const registerSchema=z.object({host,sessionId:text,cwd:text,name:z.string().optional(),kind:z.enum(['root','subagent','fork','unknown']).optional(),parentId:z.string().optional(),permission:z.enum(['prompting','bypass','unknown']).optional(),state:z.enum(['ready','busy','needsHuman','offline','unknown','paused','starting']).optional(),replyContract:z.literal(1).optional(),contextStart:z.boolean().optional(),contextReason:z.enum(['reset','switch','fork','unknown']).optional(),endpoint:z.object({epoch:text,mode:z.enum(['app-server','embedded','claude-inbox']),address:z.string(),pid:z.number().int().positive().nullable(),procStart:z.string().nullable(),codexPermission:z.object({sandbox:z.string().optional(),approval:z.enum(['prompting','bypass','unknown']).optional(),autoReview:z.boolean().optional()}).optional(),questionSupport:z.boolean().optional(),configHome:text.optional(),launchProfileId:text.optional(),native:processSchema.optional(),bridge:processSchema.optional(),runtimeId:text.optional(),processKind:z.enum(['foreground','app-server']).optional(),nativeSession:nativeSessionSchema.optional(),daemon:z.object({address:z.string(),rootSessionId:text.optional(),forkedFromId:text.optional(),sandbox:z.string().optional(),approval:z.enum(['prompting','bypass','unknown']).optional(),autoReview:z.boolean().optional()}).optional()})});
+export const modDiagnosticsSchema=z.object({consecutive:z.number().int().positive(),last_error:z.object({op:z.enum(['observe','state']),code:z.string().min(1).max(128),at:z.number().finite().nonnegative()})});
+export const mcpRegisterSchema=registerSchema.extend(profileSchema.shape).extend({expectedBinding:actorSchema.shape.binding,boundaryStartedAt:z.number().finite().optional(),context_key:text.optional()});
+export const questionDiagnosticsSchema=z.array(z.object({at:z.number().finite().nonnegative(),p:z.enum(['submit','append','start','reset','ask']),kind:z.string().max(64).optional(),id:z.string().uuid().optional(),r:z.enum(['ok','no_uuid','no_candidate','body_mismatch','origin_error','not_peer']).optional(),code:z.string().max(64).optional(),inTurn:z.boolean().optional(),candidate:z.boolean().optional(),uuid:z.boolean().optional(),source:z.boolean().optional()}).strict()).max(12);

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+publish/
+coverage/
+*.tgz
+.nxbridge-test/
+nxbridge-test-*/
+artifacts/

@@ -1,0 +1,70 @@
+name: Official CLIs
+description: Install pinned official Codex and Claude Code CLIs into a cached prefix and put them on PATH.
+
+inputs:
+  codex:
+    description: Codex npm version, "latest", or empty for the pinned version
+    default: ''
+  claude:
+    description: Claude Code npm version, "latest", or empty for the pinned version
+    default: ''
+
+outputs:
+  codex:
+    description: Resolved Codex version
+    value: ${{ steps.versions.outputs.codex }}
+  claude:
+    description: Resolved Claude Code version
+    value: ${{ steps.versions.outputs.claude }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve versions
+      id: versions
+      shell: bash
+      env:
+        CODEX: ${{ inputs.codex }}
+        CLAUDE: ${{ inputs.claude }}
+        CODEX_PIN: 0.167.2
+        CLAUDE_PIN: 2.1.328
+      run: |
+        CODEX=${CODEX:-$CODEX_PIN}; CLAUDE=${CLAUDE:-$CLAUDE_PIN}
+        resolve() { if [ "$2" = latest ]; then npm view "$1" version; else echo "$2"; fi; }
+        codex=$(resolve @openai/codex "$CODEX"); claude=$(resolve @anthropic-ai/claude-code "$CLAUDE")
+        echo "codex=$codex" >> "$GITHUB_OUTPUT"; echo "claude=$claude" >> "$GITHUB_OUTPUT"
+        echo "key=official-clis-v1-$RUNNER_OS-$RUNNER_ARCH-$ImageOS-codex$codex-claude$claude" >> "$GITHUB_OUTPUT"
+    - name: Restore CLIs
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.nxbridge-ci/cli
+        key: ${{ steps.versions.outputs.key }}
+    - name: Install CLIs
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        CODEX: ${{ steps.versions.outputs.codex }}
+        CLAUDE: ${{ steps.versions.outputs.claude }}
+      run: npm install --global --no-fund --no-audit --prefix "$HOME/.nxbridge-ci/cli" "@openai/codex@$CODEX" "@anthropic-ai/claude-code@$CLAUDE"
+    - name: Save CLIs
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: ~/.nxbridge-ci/cli
+        key: ${{ steps.versions.outputs.key }}
+    - name: Add CLIs to PATH
+      shell: bash
+      run: |
+        prefix="$HOME/.nxbridge-ci/cli"
+        if [ "$RUNNER_OS" = Windows ]; then cygpath -w "$prefix" >> "$GITHUB_PATH"; else echo "$prefix/bin" >> "$GITHUB_PATH"; fi
+    - name: Check CLI versions
+      shell: bash
+      env:
+        DISABLE_AUTOUPDATER: '1'
+        CODEX: ${{ steps.versions.outputs.codex }}
+        CLAUDE: ${{ steps.versions.outputs.claude }}
+      run: |
+        codex_seen=$(codex --version); claude_seen=$(claude --version); echo "$codex_seen"; echo "$claude_seen"
+        case "$codex_seen" in *"$CODEX"*) ;; *) echo "::error::codex reports '$codex_seen', expected $CODEX"; exit 1;; esac
+        case "$claude_seen" in *"$CLAUDE"*) ;; *) echo "::error::claude reports '$claude_seen', expected $CLAUDE"; exit 1;; esac

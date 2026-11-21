@@ -1,0 +1,75 @@
+name: Canary
+
+on:
+  schedule:
+    - cron: '23 4 * * 1,4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canary
+  cancel-in-progress: true
+
+env:
+  DISABLE_AUTOUPDATER: '1'
+
+jobs:
+  build:
+    if: github.event_name != 'schedule' || !github.event.repository.private
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/build
+
+  native:
+    name: native (${{ matrix.name }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS, latest CLIs
+            os: macos-latest
+            codex: latest
+            claude: latest
+            files: dist/native-tests/codex.test.js dist/native-tests/session-hosting.test.js dist/native-tests/isolation-options.test.js dist/native-tests/managed-isolation.test.js dist/native-tests/codex-client-identity.test.js dist/native-tests/sdk-user-prompt.test.js dist/native-tests/claude.test.js dist/native-tests/daemon-wake-probe.test.js dist/native-tests/daemon-codex.test.js
+          - name: macOS, oldest supported Codex
+            os: macos-latest
+            codex: 0.164.0
+            claude: ''
+            files: dist/native-tests/codex.test.js dist/native-tests/session-hosting.test.js dist/native-tests/isolation-options.test.js
+          - name: Linux, full
+            os: ubuntu-latest
+            codex: ''
+            claude: ''
+            files: '"dist/native-tests/**/*.test.js"'
+          - name: Windows, full
+            os: windows-latest
+            codex: ''
+            claude: ''
+            files: '"dist/native-tests/**/*.test.js"'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-fund --no-audit
+      - uses: ./.github/actions/official-clis
+        with:
+          codex: ${{ matrix.codex }}
+          claude: ${{ matrix.claude }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: build
+      - shell: bash
+        run: node tools/run-tests.mjs --test --test-concurrency=1 --test-timeout=180000 ${{ matrix.files }}

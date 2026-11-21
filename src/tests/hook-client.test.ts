@@ -1,0 +1,59 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { copyFileSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { temporaryDirectory } from './support/temporary.js';
+import { FakeAdapter } from './support/fake-adapter.js';
+import { registration } from './support/registration.js';
+import { Store } from '../storage/store.js';
+import { Broker } from '../broker/coordinator.js';
+import { listenBroker } from '../ipc/ipc.js';
+import {ensureHome} from '../ipc/home.js';
+import {PACKAGE_ROOT} from '../shared/package-location.js';
+import {sameDirectory} from '../shared/files.js';
+import {BridgeError} from '../shared/errors.js';
+import {DEFAULT_CONFIG} from '../config/defaults.js';
+import {WAKE_NOTICE} from '../types.js';
+import { writeMemberControls } from '../broker/member-control.js';
+
+test('轻量客户端复用登记、通知、控制与失败保护，旧协调器回退且未知结果不重放',{timeout:60000},async t=>{
+  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),configHome=path.join(root,'client-codex'),binary=path.join(root,process.platform==='win32'?'codex.exe':'codex');
+  await ensureHome(home);copyFileSync(process.execPath,binary);
+  const store=new Store(':memory:'),broker=new Broker(store,{...DEFAULT_CONFIG,implicit:'never'},{codex:new FakeAdapter(),claude:new FakeAdapter()} as any,home);
+  let legacy=false,uncertain=false;const calls:string[]=[];
+  const server=await listenBroker(home,async(method,params)=>{calls.push(method);if(method==='hook.client'&&legacy)throw new BridgeError('unknown_method','旧协调器');if(method==='hook.client'&&uncertain)throw new BridgeError('timeout','已提交的结果未知');return broker.dispatch(method,params);});
+                                                    
+  const entry=path.join(PACKAGE_ROOT,'publish/hook-entry.mjs'),script=`process.title='codex';const{spawn}=require('node:child_process');process.on('message',p=>{
+    const began=performance.now(),entry=${JSON.stringify(entry)},shell=p.test_shell===true;
+    const executable=shell?process.env.ComSpec:process.execPath,args=shell?['/d','/s','/c','""'+process.execPath+'" "'+entry+'" hook --host codex"']:[entry,'hook','--host','codex'];
+    const child=spawn(executable,args,{cwd:${JSON.stringify(root)},env:process.env,windowsHide:true,windowsVerbatimArguments:shell,stdio:['pipe','pipe','pipe']});
+    let out='',err='';child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>err+=d);child.on('close',code=>process.send({code,out,err,wallMs:performance.now()-began}));child.stdin.end(JSON.stringify(p));
+  });process.send('ready');`;
+  const native=spawn(binary,['-e',script],{env:{...process.env,NXBRIDGE_HOME:home,CODEX_HOME:configHome,NXBRIDGE_HOOK_STARTED_AT:''},windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),ended=once(native,'exit');
+  t.after(async()=>{if(native.exitCode===null&&native.signalCode===null)native.kill();await ended;await server.close();await broker.stop();store.close();await temp.cleanup();});await once(native,'message');
+  const invoke=async(event:string,extra:any={})=>{calls.length=0;const done=once(native,'message');native.send({hook_event_name:event,session_id:'thin-root',transcript_path:path.join(root,'thin-root.jsonl'),cwd:root,tool_name:'exec_command',...extra});const value=(await done)[0];assert.equal(value.code,0,value.err);return{...value,result:JSON.parse(value.out),calls:[...calls]};};
+  const start=await invoke('SessionStart',{source:'startup'});assert.match(start.result.hookSpecificOutput.additionalContext,/standing developer instructions/);assert.deepEqual(start.calls,['hook.client']);
+  const peer=store.find('codex','thin-root');assert.ok(peer,'主会话登记失败：'+JSON.stringify({stderr:start.err,systemMessage:start.result.systemMessage,calls:start.calls}));
+  const binding=store.bindings.current(peer.id)!;assert.ok(sameDirectory(binding.configHome,configHome));assert.equal(binding.pid,native.pid);
+  const partner=store.register(registration('claude','thin-partner',{cwd:root})),pair=store.pair(partner.id,peer.id);store.accept(pair,partner,'待取的性能验收消息','thin-message');
+  const post=await invoke('PostToolUse');assert.match(post.result.hookSpecificOutput.additionalContext,/receive_messages/);assert.deepEqual(post.calls,['hook.client']);
+  if(process.platform==='win32'){const shell=await invoke('PostToolUse',{test_shell:true});assert.match(shell.result.hookSpecificOutput.additionalContext,/receive_messages/);assert.deepEqual(shell.calls,['hook.client']);}
+  const control=await invoke('UserPromptSubmit',{prompt:'nxbridge status'});assert.equal(control.result.decision,'block');
+  const denied=await invoke('PreToolUse',{tool_name:'collaboration.spawn_agent',tool_input:{message:'任务 nxref:msg:missing'}});assert.equal(denied.result.hookSpecificOutput.permissionDecision,'deny');
+  legacy=true;const old=await invoke('PostToolUse');assert.match(old.result.hookSpecificOutput.additionalContext,/receive_messages/);assert.deepEqual(old.calls,['hook.client','mcp.register','hook']);legacy=false;
+  store.endContext({host:'codex',sessionId:peer.sessionId!,callId:'before-compact',binding:{key:binding.key,epoch:binding.epoch}},'switch');
+  const compact=await invoke('SessionStart',{source:'compact'});assert.match(compact.result.hookSpecificOutput.additionalContext,/standing developer instructions/);
+  assert.equal(store.bindings.current(peer.id)?.transitionReason,undefined,'同一会话压缩后继续运行，旧切换原因应作废');assert.equal(store.bindings.current(peer.id)?.epoch,binding.epoch);
+  uncertain=true;const unknown=await invoke('UserPromptSubmit',{prompt:WAKE_NOTICE});assert.equal(unknown.result.continue,false);assert.deepEqual(unknown.calls,['hook.client']);assert.match(unknown.err,/结果未知/);uncertain=false;
+  const stop=await invoke('Stop');assert.equal(stop.result.systemMessage,undefined);
+  const hook=(broker as any).hook;(broker as any).hook=async(p:any)=>{await hook.call(broker,p);throw new BridgeError('starting','执行后出现的同名错误');};
+  const afterMutation=await invoke('Interrupt');assert.deepEqual(afterMutation.calls,['hook.client']);assert.match(afterMutation.err,/执行后出现/);(broker as any).hook=hook;
+  const interrupt=await invoke('Interrupt');assert.ok(interrupt.wallMs<3000,JSON.stringify(interrupt));assert.equal(store.peer(peer.id).state,'paused');
+  const end=await invoke('SessionEnd');assert.ok(end.wallMs<3000,JSON.stringify(end));assert.equal(store.bindings.current(peer.id)?.transitioning,true);
+  await invoke('SessionStart',{source:'resume'});store.updatePeer(peer.id,{enabled:false});writeMemberControls(home,store);
+  const disabled=await invoke('SessionStart',{source:'resume'});assert.deepEqual(disabled.result,{});assert.deepEqual(disabled.calls,[]);
+  const source=readFileSync(entry,'utf8');assert.doesNotMatch(source,/from["']\.\/vendor-/);assert.ok(Buffer.byteLength(source)<40000,'正常入口应只包含薄客户端与输出保护');
+  t.diagnostic(JSON.stringify({postMs:post.wallMs,interruptMs:interrupt.wallMs,endMs:end.wallMs,entryBytes:Buffer.byteLength(source)}));
+});

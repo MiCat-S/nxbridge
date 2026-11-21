@@ -1,0 +1,44 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import http from 'node:http';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { stringify } from 'smol-toml';
+import { temporaryDirectory } from '../tests/support/temporary.js';
+import { FakeAdapter } from '../tests/support/fake-adapter.js';
+import { registration } from '../tests/support/registration.js';
+import { releaseNativeTestLaunches } from '../tests/support/native-launch.js';
+import {DEFAULT_CONFIG} from '../config/defaults.js';
+import {delay} from '../shared/time.js';
+import {privateDirectory} from '../process/permissions.js';
+import {spawnCli} from '../process/host-command.js';
+import { nativeDescendant, processIdentity } from '../process/process.js';
+import { rememberOwnedHost } from '../process/owned-processes.js';
+import { CodexAdapter, connectAppServer } from '../hosts/codex/adapter.js';
+import { Broker } from '../broker/coordinator.js';
+import { Store } from '../storage/store.js';
+import { disabledMember } from '../broker/member-control.js';
+
+test('真实 Codex：关闭保留原进程，用户退出后重启 broker 不恢复替代后台或发模型请求',{timeout:60000},async t=>{
+  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexHome=path.join(root,'codex'),launchId=randomUUID();for(const dir of [home,codexHome])mkdirSync(dir);
+  let modelRequests=0;const model=http.createServer((_req,res)=>{modelRequests++;res.writeHead(500);res.end('隔离验收禁止模型请求');});await new Promise<void>(resolve=>model.listen(0,'127.0.0.1',resolve));
+  const config={...DEFAULT_CONFIG,implicit:'never' as const,codexHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
+  writeFileSync(path.join(codexHome,'config.toml'),stringify({model:'gpt-5.1-codex',model_provider:'off_local',check_for_update_on_startup:false,features:{daemon_auto_start:false,apps:false,remote_plugin:false},model_providers:{off_local:{name:'开关隔离验收',base_url:'http://127.0.0.1:'+(model.address() as any).port+'/v1',wire_api:'responses',requires_openai_auth:false}}}),'utf8');
+  const run=path.join(root,'run');await privateDirectory(run);const address='unix://'+path.join(run,'off.sock');
+  const child=spawnCli('codex',['app-server','--listen',address],{cwd:root,stdio:['ignore','ignore','pipe']},config,home);let stderr='';child.stderr?.on('data',chunk=>stderr+=chunk);await rememberOwnedHost(home,child,'codex','codex-runtime',launchId,codexHome);
+  let rpc:Awaited<ReturnType<typeof connectAppServer>>|undefined,store=new Store(path.join(home,'state.db')),broker:Broker|undefined;
+  t.after(async()=>{await broker?.stop();store.close();await rpc?.close();assert.deepEqual(await releaseNativeTestLaunches(home,record=>record.proof.launchId===launchId),[]);model.closeAllConnections();await new Promise<void>(resolve=>model.close(()=>resolve()));await temp.cleanup();});
+  for(let i=0;i<80&&!rpc;i++){try{rpc=await connectAppServer(address,config,undefined,home);}catch(error){if(i===79)throw new Error(stderr,{cause:error});await delay(100);}}
+  const native=await nativeDescendant(child.pid!,'codex',0),thread=(await rpc!.request('thread/start',{cwd:root})).thread;
+  const source=store.register(registration('claude','off-native-source',{cwd:root})),target=store.register(registration('codex',thread.id,{cwd:root,endpoint:{mode:'app-server',address,epoch:address,pid:native.pid,procStart:native.startedAt,configHome:codexHome}})),pair=store.pair(source.id,target.id);store.updatePeer(target.id,{owner:'nxbridge'});
+  const adapter=new CodexAdapter(config,home);broker=new Broker(store,config,{codex:adapter,claude:new FakeAdapter()} as any,home);
+  const message=store.accept(pair,source,'关闭期间原任务保留','off-native');await broker.dispatch('member.switch',{actor:{host:'claude',sessionId:'off-native-source',callId:'off'},target:'partner',enabled:false,user_requested:true});await broker.pump();
+  assert.equal((await processIdentity(native.pid)).startedAt,native.startedAt,'关闭开关不能停止原生窗口');assert.equal(store.message(message.id).state,'accepted');assert.equal(modelRequests,0);
+  await assert.rejects(broker.dispatch('send',{actor:{host:'claude',sessionId:'off-native-source',callId:'new'},message:'不得新建任务'}),{code:'member_disabled'});
+  assert.deepEqual(await releaseNativeTestLaunches(home,record=>record.proof.launchId===launchId),[]);await rpc!.close();rpc=undefined;await broker.stop();store.close();
+  store=new Store(path.join(home,'state.db'));const restarted=new CodexAdapter(config,home);let accesses=0;
+  for(const name of ['connect','create','ensureEndpoint','wake','restart'] as const)(restarted as any)[name]=async()=>{accesses++;assert.fail('已关闭成员不得被访问或恢复：'+name);};
+  broker=new Broker(store,config,{codex:restarted,claude:new FakeAdapter()} as any,home);await broker.start();await broker.pump();await broker.stop();
+  assert.equal(accesses,0);assert.equal(store.pairFor(target.id)?.id,pair.id);assert.equal(store.peer(target.id).sessionId,thread.id);assert.equal(store.message(message.id).state,'accepted');assert.equal(disabledMember(home,{host:'codex',sessionId:thread.id})?.peerId,target.id);assert.equal(modelRequests,0);
+});

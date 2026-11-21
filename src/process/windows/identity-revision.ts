@@ -1,0 +1,1 @@
+export const WINDOWS_IDENTITY_REVISION="44d106d1dd0010d7";

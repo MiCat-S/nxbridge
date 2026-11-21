@@ -1,0 +1,32 @@
+name: Build once
+description: Check, build dist and publish, pack the release ZIP, and upload them as the run's build artifact.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: 24
+        cache: npm
+    - shell: bash
+      run: npm ci --no-fund --no-audit
+    - shell: bash
+      run: npm run check
+    - shell: bash
+      run: npm run build && npm run build:publish
+    - name: Pack release ZIP
+      shell: bash
+      run: |
+        missing=; command -v 7z >/dev/null || missing="$missing p7zip-full"; command -v bsdtar >/dev/null || missing="$missing libarchive-tools"
+        if [ -n "$missing" ]; then sudo apt-get update && sudo apt-get install --yes --no-install-recommends $missing; fi
+        npm run pack:zip
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: build
+        path: |
+          dist/
+          publish/
+          artifacts/releases/*.zip
+        retention-days: 30
+        if-no-files-found: error
+        include-hidden-files: true
