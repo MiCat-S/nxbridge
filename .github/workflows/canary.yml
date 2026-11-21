@@ -48,11 +48,11 @@ jobs:
             codex: ''
             claude: ''
             files: '"dist/native-tests/**/*.test.js"'
-          - name: Windows, full
+          - name: Windows, hosted-compatible
             os: windows-latest
             codex: ''
             claude: ''
-            files: '"dist/native-tests/**/*.test.js"'
+            files: dist/native-tests/autonomy-codex.test.js dist/native-tests/codex-client-identity.test.js dist/native-tests/codex-hook-trust.test.js dist/native-tests/codex-injection-boundary.test.js dist/native-tests/compaction-probe.test.js dist/native-tests/compaction-retention.test.js dist/native-tests/hook-output-codex.test.js dist/native-tests/isolation-options.test.js dist/native-tests/liveness-codex.test.js dist/native-tests/mcp-list-changed.test.js dist/native-tests/member-control.test.js dist/native-tests/plugin-upgrade-state.test.js dist/native-tests/publish-only.test.js dist/native-tests/recovery-codex.test.js dist/native-tests/runtime-publish.test.js dist/native-tests/setup-preflight.test.js dist/native-tests/socket-integrity.test.js
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:

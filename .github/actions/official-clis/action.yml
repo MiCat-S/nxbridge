@@ -58,6 +58,18 @@ runs:
       run: |
         prefix="$HOME/.nxbridge-ci/cli"
         if [ "$RUNNER_OS" = Windows ]; then cygpath -w "$prefix" >> "$GITHUB_PATH"; else echo "$prefix/bin" >> "$GITHUB_PATH"; fi
+    - name: Add CLIs and Node to the runner's persistent user PATH
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $prefix = Join-Path $HOME '.nxbridge-ci\cli'
+        $node = Split-Path -Parent (Get-Command node).Source
+        $current = [Environment]::GetEnvironmentVariable('Path', 'User')
+        $parts = @($prefix, $node) + @(($current -split ';') | Where-Object { $_ })
+        [Environment]::SetEnvironmentVariable('Path', (($parts | Select-Object -Unique) -join ';'), 'User')
+        $saved = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
+        if (($saved -notcontains $prefix) -or ($saved -notcontains $node)) { throw 'user PATH was not updated' }
+        Write-Output "user PATH: $($saved -join ';')"
     - name: Check CLI versions
       shell: bash
       env:

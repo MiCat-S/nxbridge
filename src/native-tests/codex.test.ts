@@ -20,7 +20,7 @@ import {PACKAGE_ROOT} from '../shared/package-location.js';
 import { connectAppServer, CodexAdapter } from '../hosts/codex/adapter.js';
 import { Store } from '../storage/store.js';
 import {peerKeyFile} from '../hosts/claude/claude-inbox.js';
-import {processIdentity,liveProcess} from '../process/process.js';
+import {processIdentity,processAncestors,liveProcess} from '../process/process.js';
 import { brokerCall, ensureBroker } from '../ipc/ipc.js';
 import { diagnose } from '../app/commands/doctor.js';
 import { readCodexHistory } from '../hosts/codex/codex-history.js';
@@ -122,7 +122,12 @@ test('隔离官方 CLI：安装保留配置、直连、命名空间工具、双�
   const after=await brokerCall<any>('status');assert.equal(after.messages.length,2);
   assert.equal(after.messages.find((m:any)=>m.from===codexPeer.id).body,outgoing);assert.equal(after.communicationTips.find((s:any)=>s.peerId===codexPeer.id).firings.report,1);
   const monitoredEndpoint=after.endpoints.find((e:any)=>e.peerId===codexPeer.id&&e.active&&e.mode==='app-server');
-  assert.equal(monitoredEndpoint.native.pid,serverPid);assert.ok(monitoredEndpoint.native.procStart);assert.ok(monitoredEndpoint.bridge.pid);assert.ok(monitoredEndpoint.bridge.procStart);
+  assert.ok(monitoredEndpoint,'已连接的线程没有原生端点记录');
+                                                         
+  const ancestry=await processAncestors(monitoredEndpoint.native.pid,10),native=ancestry[0],launched=identities.get(serverPid!);
+  assert.ok(native);assert.ok(launched);assert.match(native.name,/^codex(?:\.exe)?$/i);assert.equal(native.startedAt,monitoredEndpoint.native.procStart);
+  assert.ok(ancestry.some(value=>value.pid===launched.pid&&value.startedAt===launched.startedAt),'原生宿主不属于本次启动的进程代次');
+  assert.ok(monitoredEndpoint.bridge.pid);assert.ok(monitoredEndpoint.bridge.procStart);
   const launches=await brokerCall<any>('launch.status');assert.ok(launches.profiles.some((profile:any)=>profile.host==='codex'&&profile.sourceSession===thread.id),'直接 MCP 没有登记用户的原生启动记录');assert.ok(launches.profiles.every((profile:any)=>!('env' in profile)));
   assert.equal(after.messages.find((m:any)=>m.id===incoming.message_id).state,'contextObserved');
   const history=await client.request('thread/read',{threadId:thread.id,includeTurns:true});

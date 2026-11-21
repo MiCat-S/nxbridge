@@ -22,13 +22,22 @@ import { disabledMember } from '../broker/member-control.js';
 
 test('真实 Codex：关闭保留原进程，用户退出后重启 broker 不恢复替代后台或发模型请求',{timeout:60000},async t=>{
   const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexHome=path.join(root,'codex'),launchId=randomUUID();for(const dir of [home,codexHome])mkdirSync(dir);
-  let modelRequests=0;const model=http.createServer((_req,res)=>{modelRequests++;res.writeHead(500);res.end('隔离验收禁止模型请求');});await new Promise<void>(resolve=>model.listen(0,'127.0.0.1',resolve));
+  let modelRequests=0;const model=http.createServer((_req,res)=>{modelRequests++;res.writeHead(500);res.end('隔离验收禁止模型请求');});
+  let rpc:Awaited<ReturnType<typeof connectAppServer>>|undefined,store:Store|undefined,broker:Broker|undefined;
+  t.after(async()=>{
+    try{
+      await broker?.stop();store?.close();await rpc?.close();
+      assert.deepEqual(await releaseNativeTestLaunches(home,record=>record.proof.launchId===launchId),[]);
+    }finally{
+      model.closeAllConnections();await new Promise<void>(resolve=>model.close(()=>resolve()));await temp.cleanup();
+    }
+  });
+  await new Promise<void>(resolve=>model.listen(0,'127.0.0.1',resolve));
   const config={...DEFAULT_CONFIG,implicit:'never' as const,codexHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
   writeFileSync(path.join(codexHome,'config.toml'),stringify({model:'gpt-5.1-codex',model_provider:'off_local',check_for_update_on_startup:false,features:{daemon_auto_start:false,apps:false,remote_plugin:false},model_providers:{off_local:{name:'开关隔离验收',base_url:'http://127.0.0.1:'+(model.address() as any).port+'/v1',wire_api:'responses',requires_openai_auth:false}}}),'utf8');
   const run=path.join(root,'run');await privateDirectory(run);const address='unix://'+path.join(run,'off.sock');
   const child=spawnCli('codex',['app-server','--listen',address],{cwd:root,stdio:['ignore','ignore','pipe']},config,home);let stderr='';child.stderr?.on('data',chunk=>stderr+=chunk);await rememberOwnedHost(home,child,'codex','codex-runtime',launchId,codexHome);
-  let rpc:Awaited<ReturnType<typeof connectAppServer>>|undefined,store=new Store(path.join(home,'state.db')),broker:Broker|undefined;
-  t.after(async()=>{await broker?.stop();store.close();await rpc?.close();assert.deepEqual(await releaseNativeTestLaunches(home,record=>record.proof.launchId===launchId),[]);model.closeAllConnections();await new Promise<void>(resolve=>model.close(()=>resolve()));await temp.cleanup();});
+  store=new Store(path.join(home,'state.db'));
   for(let i=0;i<80&&!rpc;i++){try{rpc=await connectAppServer(address,config,undefined,home);}catch(error){if(i===79)throw new Error(stderr,{cause:error});await delay(100);}}
   const native=await nativeDescendant(child.pid!,'codex',0),thread=(await rpc!.request('thread/start',{cwd:root})).thread;
   const source=store.register(registration('claude','off-native-source',{cwd:root})),target=store.register(registration('codex',thread.id,{cwd:root,endpoint:{mode:'app-server',address,epoch:address,pid:native.pid,procStart:native.startedAt,configHome:codexHome}})),pair=store.pair(source.id,target.id);store.updatePeer(target.id,{owner:'nxbridge'});

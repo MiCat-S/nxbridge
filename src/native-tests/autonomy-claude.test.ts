@@ -16,6 +16,7 @@ import { preparePlugins } from '../install/setup.js';
 import { claudeChild } from '../hosts/claude/claude-child.js';
 import { stopOwnedProcess } from '../process/process-stop.js';
 import { writeConfiguration } from '../config/configuration.js';
+import { resolveCli } from '../process/host-command.js';
 
 test('新自有 Claude 使用原生绕过和会话接收设置，跨权限来信直接执行且不改用户设置',{skip:process.platform!=='win32'&&(process.platform!=='linux'||process.getuid?.()===0),timeout:150000},async t=>{
   const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),claudehome=path.join(root,'claude'),codexhome=path.join(root,'codex'),proof=path.join(root,'proof.txt'),script=path.join(root,'action.mjs');
@@ -38,8 +39,8 @@ test('新自有 Claude 使用原生绕过和会话接收设置，跨权限来信
   }finally{model.closeAllConnections();await new Promise<void>(resolve=>model.close(()=>resolve()));restoreEnvironment();}});
   const extra:Record<string,unknown>={};
   if(process.platform==='linux'){
-    const plugin=path.join(await preparePlugins(home),'plugins','claude'),wrapper=path.join(root,'child-wrapper.mjs');
-    writeFileSync(wrapper,`import{spawn}from'node:child_process';const args=process.argv.slice(2);if(args[0]==='agents'||args.includes('--bg'))process.exit(2);const c=spawn('/usr/local/bin/claude',args[0]==='plugin'||args.includes('--version')?args:[...args,'--plugin-dir',${JSON.stringify(plugin)}],{stdio:'inherit',env:process.env});for(const s of ['SIGTERM','SIGINT'])process.on(s,()=>c.kill(s));c.once('exit',code=>process.exit(code??1));`,'utf8');
+    const cli=resolveCli('claude'),plugin=path.join(await preparePlugins(home),'plugins','claude'),wrapper=path.join(root,'child-wrapper.mjs');
+    writeFileSync(wrapper,`import{spawn}from'node:child_process';const args=process.argv.slice(2);if(args[0]==='agents'||args.includes('--bg'))process.exit(2);const launch=args[0]==='plugin'||args.includes('--version')?args:[...args,'--plugin-dir',${JSON.stringify(plugin)}];const c=spawn(${JSON.stringify(cli.command)},[...${JSON.stringify(cli.prefix)},...launch],{stdio:'inherit',env:process.env});for(const s of ['SIGTERM','SIGINT'])process.on(s,()=>c.kill(s));c.once('exit',code=>process.exit(code??1));`,'utf8');
     extra.claudeCommand=[process.execPath,wrapper];
   }
   writeFileSync(path.join(home,'config.json'),JSON.stringify({...DEFAULT_CONFIG,compatibilityWake:'strict',claudeHome:claudehome,codexHome:codexhome,...extra}),'utf8');

@@ -22,16 +22,17 @@ async function recoveryRelease(directory:string,filename='nxbridge-collaboration
   return{source,buildId:manifest.buildId};
 }
 
-test('仅长驻入口代码变化也提示对应窗口重载，同一版本重复更新无需再次操作',async t=>{
-  for(const [entry,required] of [['mcp-entry.mjs',{claude:true,codex:true}],['mod-entry.mjs',{claude:true,codex:false}],['vendor-core.mjs',{claude:true,codex:true}],['runtime-native-source.mjs',{claude:true,codex:true}]] as const){
+                                         
+for(const [entry,required] of [['mcp-entry.mjs',{claude:true,codex:true}],['mod-entry.mjs',{claude:true,codex:false}],['vendor-core.mjs',{claude:true,codex:true}],['runtime-native-source.mjs',{claude:true,codex:true}]] as const){
+  test(`仅长驻入口代码变化也提示对应窗口重载，同一版本重复更新无需再次操作（${entry}）`,async t=>{
     const f=fixture(t);await setup({home:f.home},f.services);
     const release=await recoveryRelease(f.directory,entry),updated=await setup({home:f.home,from:release.source},f.services) as any;
     assert.deepEqual(updated.reloadRequired,required);assert.equal(updated.hookTrustRequired,false);
     assert.equal(updated.next.some((value:string)=>value.includes('nxbridge restart codex')),required.codex);
     assert.ok(updated.next.some((value:string)=>value.includes('/reload-plugins')));
     assert.deepEqual((await setup({home:f.home,from:release.source},f.services) as any).reloadRequired,{claude:false,codex:false});
-  }
-});
+  });
+}
 
 test('显式正式来源可替换手工未知构建，保留配对、未知投递、禁用状态且忽略旧 adopt 文件',async t=>{
   const f=fixture(t);await setup({home:f.home},f.services);

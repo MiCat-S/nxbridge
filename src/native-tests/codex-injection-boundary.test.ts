@@ -17,7 +17,7 @@ import { connectAppServer } from '../hosts/codex/adapter.js';
 import type { RpcMessage } from '../ipc/rpc.js';
 
 test('隔离原生 Codex：流中及空闲转活动时成对注入不拆散工具事务',{timeout:120000},async t=>{
-  const temp=temporaryDirectory(),directory=temp.directory,codex=path.join(directory,'codex');mkdirSync(codex);
+  const temp=temporaryDirectory(),directory=temp.directory,codex=path.join(directory,'codex'),home=path.join(directory,'bridge');mkdirSync(codex);
   const requests:any[]=[],events:RpcMessage[]=[],errors:string[]=[];
   let releaseStream!:()=>void,streamStarted!:()=>void;
   const started=new Promise<void>(resolve=>streamStarted=resolve),released=new Promise<void>(resolve=>releaseStream=resolve);
@@ -34,13 +34,24 @@ test('隔离原生 Codex：流中及空闲转活动时成对注入不拆散工�
     send({type:'response.output_item.done',output_index:0,item});
     send({type:'response.completed',response:{id,status:'completed',output:[item],usage:{input_tokens:20,output_tokens:5,total_tokens:25}}});res.end();
   }catch(error){errors.push(String(error));res.writeHead(500);res.end('隔离服务失败');}});
+  let rpc:Awaited<ReturnType<typeof connectAppServer>>|undefined,child:ReturnType<typeof spawnCli>|undefined;
+  t.after(async()=>{
+    releaseStream();rpc?.close();
+    try{
+      if(child){
+        assert.deepEqual(await releaseNativeTestLaunches(home),[]);
+        if(child.exitCode===null&&child.signalCode===null)await once(child,'exit');
+      }
+    }finally{
+      model.closeAllConnections();await new Promise<void>(resolve=>model.close(()=>resolve()));await temp.cleanup();
+    }
+  });
   await new Promise<void>(resolve=>model.listen(0,'127.0.0.1',resolve));
   const reserve=net.createServer();await new Promise<void>(resolve=>reserve.listen(0,'127.0.0.1',resolve));const port=(reserve.address() as AddressInfo).port;await new Promise<void>(resolve=>reserve.close(()=>resolve()));
   const endpoint=`ws://127.0.0.1:${port}`,option=(key:string,value:unknown)=>['-c',key+'='+JSON.stringify(value)];
-  const child=spawnCli('codex',['app-server','--listen',endpoint,...option('model_provider','boundary_probe'),...option('model_providers.boundary_probe.name','隔离边界探针'),...option('model_providers.boundary_probe.base_url',`http://127.0.0.1:${(model.address() as AddressInfo).port}/v1`),...option('model_providers.boundary_probe.wire_api','responses'),...option('model_providers.boundary_probe.requires_openai_auth',false),...option('model_providers.boundary_probe.request_max_retries',0),...option('model_providers.boundary_probe.stream_max_retries',0)],{cwd:directory,env:{...process.env,CODEX_HOME:codex,NXBRIDGE_HOME:path.join(directory,'bridge'),RUST_LOG:'error'},stdio:['ignore','ignore','pipe']},DEFAULT_CONFIG);
-  child.stderr!.on('data',()=>{});let rpc:Awaited<ReturnType<typeof connectAppServer>>|undefined;
-  t.after(async()=>{releaseStream();rpc?.close();assert.deepEqual(await releaseNativeTestLaunches(path.join(directory,'bridge')),[]);if(child.exitCode===null&&child.signalCode===null)await once(child,'exit');model.closeAllConnections();await new Promise<void>(resolve=>model.close(()=>resolve()));await temp.cleanup();});
-  await rememberOwnedHost(path.join(directory,'bridge'),child,'codex','codex-runtime',randomUUID(),codex);
+  child=spawnCli('codex',['app-server','--listen',endpoint,...option('model_provider','boundary_probe'),...option('model_providers.boundary_probe.name','隔离边界探针'),...option('model_providers.boundary_probe.base_url',`http://127.0.0.1:${(model.address() as AddressInfo).port}/v1`),...option('model_providers.boundary_probe.wire_api','responses'),...option('model_providers.boundary_probe.requires_openai_auth',false),...option('model_providers.boundary_probe.request_max_retries',0),...option('model_providers.boundary_probe.stream_max_retries',0)],{cwd:directory,env:{...process.env,CODEX_HOME:codex,NXBRIDGE_HOME:home,RUST_LOG:'error'},stdio:['ignore','ignore','pipe']},DEFAULT_CONFIG,home);
+  child.stderr!.on('data',()=>{});
+  await rememberOwnedHost(home,child,'codex','codex-runtime',randomUUID(),codex);
   const wait=async(check:()=>boolean,reason:string)=>{const until=Date.now()+20000;while(!check()){assert.ok(Date.now()<until,reason+'；'+errors.join(';'));await delay(20);}};
   for(let i=0;i<80;i++){try{rpc=await connectAppServer(endpoint,DEFAULT_CONFIG);break;}catch{await delay(100);}}assert.ok(rpc,'隔离 App Server 未就绪');
   rpc.on('notification',(event:RpcMessage)=>events.push(event));
