@@ -14,7 +14,7 @@ Claude Code 与 Codex CLI 的本地平等搭档通信。双方保留原生 CLI�
 
 变更记录见提交历史和 Releases。许可证为 MIT，见 [LICENSE](LICENSE)。
 
-问题和建议请提 Issue；安全漏洞请按 [SECURITY.md](SECURITY.md) 私下报告。本仓库不接受 Pull Request。
+安全漏洞请按 [SECURITY.md](SECURITY.md) 私下报告。本仓库不接受 Issue 和 Pull Request。
 
 ## 目录结构
 
