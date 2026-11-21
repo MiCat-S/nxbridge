@@ -20,6 +20,12 @@ export interface Terminal {
   close():Promise<void>;
 }
 
+                                                   
+export function codexComposerReady(output:string,modelFooter:string):boolean{
+  const visible=stripVTControlCharacters(output),banner=visible.lastIndexOf('OpenAI Codex');
+  return banner>=0&&visible.includes(modelFooter,banner+'OpenAI Codex'.length);
+}
+
 export function startTerminal(root:string,home:string,exe:string,args:string[],cwd:string,env:NodeJS.ProcessEnv):Promise<Terminal>{
   return process.platform==='win32'?NativeTerminal.start(root,home,exe,args,cwd,env):PosixTerminal.start(root,home,exe,args,cwd,env);
 }
@@ -80,7 +86,9 @@ class PosixTerminal implements Terminal {
     }
   }
   async prompt(value:string):Promise<void>{
-    const offset=this.output.length;this.send(value);
+    const offset=this.output.length;
+                                                 
+    this.send(this.host==='codex'&&value?'\x1b[200~'+value+'\x1b[201~':value);
     if(this.host==='claude'&&value)await this.wait(()=>stripVTControlCharacters(this.output.slice(offset)).replace(/\s+/gu,'').includes(value.replace(/\s+/gu,'')),'原生输入未回显',15000);
     await delay(this.host==='claude'?600:150);this.send('\r');
   }

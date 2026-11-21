@@ -15,6 +15,7 @@ import { processIdentity } from '../process/process.js';
 import {PACKAGE_ROOT} from '../shared/package-location.js';
 import {resolveCli,runCli} from '../process/host-command.js';
 import { NativeTerminal } from './terminal-fixture.js';
+import {codexComposerReady} from './portable-terminal-fixture.js';
 
 test('安装版 Codex 窗口：延迟新建、压缩、分支、恢复及关闭重接保留配对', {skip:process.platform!=='win32',timeout:170000},async t=>{
   const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexhome=path.join(root,'codex'),claudehome=path.join(root,'claude'),eventfile=path.join(root,'events.jsonl');
@@ -56,7 +57,7 @@ test('安装版 Codex 窗口：延迟新建、压缩、分支、恢复及关闭�
   assert.ok(requests.some(r=>JSON.stringify(r.input).includes('NX_BEFORE_FIRST_PROMPT')));assert.equal(pair.codex,x.id);
   const xa={host:'codex',sessionId:x.sessionId,callId:'lineage-question',binding:{key:s.bindings.find((b:any)=>b.peerId===x.id&&b.active).key,epoch:x.context.epoch}};
   const pending=await brokerCall<any>('question.create',{actor:xa,questions:[{id:'q',header:'验证',question:'沿袭验证？',options:[{label:'甲',description:'甲'},{label:'乙',description:'乙'}]}]},{home});
-  const newOffset=terminal.output.length;await terminal.prompt('/new');await wait(()=>stripVTControlCharacters(terminal!.output.slice(newOffset)).includes('OpenAI Codex'),'原生新对话界面未出现');
+  const newOffset=terminal.output.length;await terminal.prompt('/new');await wait(()=>codexComposerReady(terminal!.output.slice(newOffset),'gpt-5.1-codex low'),'原生新对话尚未准备好接收输入');
                                                       
   const newEndBeforePrompt=events().filter(e=>e.hook_event_name==='SessionEnd').length;
   s=await status();assert.equal(s.peers.find((p:any)=>p.id===x.id).sessionId,original);

@@ -11,7 +11,7 @@ import {homedir} from 'node:os';
 
 const {workspace,directory:root,wakeProbeOnly=false}=JSON.parse(readFileSync(process.argv[2],'utf8'));
 const load=name=>import(pathToFileURL(path.join(workspace,'dist',name+'.js'))),require=createRequire(path.join(workspace,'package.json')),{stringify}=require('smol-toml');
-const {preparePlugins}=await load('install/setup'),{DEFAULT_CONFIG}=await load('config/defaults'),{brokerCall,ensureBroker}=await load('ipc/ipc'),{configClient}=await load('hosts/codex/stdio-codex'),{startTerminal}=await load('native-tests/portable-terminal-fixture'),{resolveCli,runCli}=await load('process/host-command'),{delay}=await load('shared/time'),{processIdentity,codexArguments,codexAppServerArguments}=await load('process/process'),{recordOwnedProcess}=await load('process/owned-processes');
+const {preparePlugins}=await load('install/setup'),{DEFAULT_CONFIG}=await load('config/defaults'),{brokerCall,ensureBroker}=await load('ipc/ipc'),{configClient}=await load('hosts/codex/stdio-codex'),{startTerminal,codexComposerReady}=await load('native-tests/portable-terminal-fixture'),{resolveCli,runCli}=await load('process/host-command'),{delay}=await load('shared/time'),{processIdentity,codexArguments,codexAppServerArguments}=await load('process/process'),{recordOwnedProcess}=await load('process/owned-processes');
 const home=path.join(root,'bridge'),codexhome=path.join(root,'codex'),claudehome=path.join(root,'claude'),eventsFile=path.join(root,'hooks.jsonl'),hookOutputFile=path.join(root,'hook-output.jsonl'),resultFile=path.join(root,'result.json');
 const stage=value=>appendFileSync(path.join(root,'stages.jsonl'),JSON.stringify({at:new Date().toISOString(),...value})+'\n','utf8');
 let terminal,secondTerminal,client,model,daemonIdentity,modelFailure,daemonLaunchAttempted=false;const result={},requests=[],requestHeaders=[],acceptance=true;
@@ -196,7 +196,7 @@ try{
     await wait(async()=>(await status()).peers.find(p=>p.id===rootPeer.id)?.sessionId===forkId);assert.equal((await status()).pairs.find(p=>p.id===pair.id)?.codex,rootPeer.id);
     const firstTerminal=terminal,other=path.join(root,'other-project');mkdirSync(other);secondTerminal=await start(false,other);terminal=secondTerminal;await turn('MCP_PROBE_2');
     const secondId=events().filter(e=>e.input.hook_event_name==='SessionStart').at(-1).input.session_id,secondPeer=(await status()).peers.find(p=>p.sessionId===secondId);assert.equal(secondPeer.cwd,other);assert.notEqual(secondPeer.id,rootPeer.id);terminal=firstTerminal;
-    const newOffset=terminal.output.length;await terminal.prompt('/new');await terminal.wait(()=>terminal.output.slice(newOffset).includes('OpenAI Codex'),'新会话界面未出现');
+    const newOffset=terminal.output.length;await terminal.prompt('/new');await terminal.wait(()=>codexComposerReady(terminal.output.slice(newOffset),'gpt-5.1-codex low'),'新会话尚未准备好接收输入');
                                                       
     await turn('MCP_PROBE_3');
     const newId=events().filter(e=>e.input.hook_event_name==='SessionStart').at(-1).input.session_id;assert.notEqual(newId,forkId);
