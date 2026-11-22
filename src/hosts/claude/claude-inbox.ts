@@ -39,7 +39,11 @@ export async function deliverClaudeInbox(peer:Peer,endpoint:Endpoint,message:Del
   let token:string|undefined,reply:string|undefined;
   try{
     const home=directory(),record=readJson<SessionRecord>(path.join(home,'sessions',`${endpoint.pid}.json`));
-    if(record.sessionId!==peer.sessionId||(record.procStartFt??record.procStart??null)!==endpoint.procStart||!matchesProcess(record,await processIdentity(endpoint.pid)))throw new DeliveryError('stale_endpoint','Claude 会话或进程代次已改变，等待重新登记。');
+    if(record.sessionId!==peer.sessionId||(record.procStartFt??record.procStart??null)!==endpoint.procStart)throw new DeliveryError('stale_endpoint','Claude 会话或进程代次已改变，等待重新登记。');
+    const native=await processIdentity(endpoint.pid);
+                                                     
+    if(['Z','X'].includes(native.state??''))throw new DeliveryError('offline','Claude 会话已经退出。');
+    if(!matchesProcess(record,native))throw new DeliveryError('stale_endpoint','Claude 会话或进程代次已改变，等待重新登记。');
     if(process.platform==='win32'){
       const key=readJson<{peerToken:string;procStart?:string;procStartFt?:string}>(peerKeyFile(endpoint.pid,endpoint.address,home));
       if(typeof key.peerToken!=='string'||!key.peerToken||(key.procStartFt??key.procStart??null)!==endpoint.procStart)throw new DeliveryError('peer_key_mismatch','Claude peer key 与当前进程不匹配。');

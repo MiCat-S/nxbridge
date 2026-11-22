@@ -209,7 +209,7 @@ async function probeProcessesNow(records:{pid:number;procStart:string}[],timeout
     }
   }else{
     await Promise.all(pids.map(async pid=>{
-      try{identities.set(pid,{generation:(await processIdentity(pid)).startedAt});}
+      try{const identity=await processIdentity(pid);if(['Z','X'].includes(identity.state??''))missing.add(pid);else identities.set(pid,{generation:identity.startedAt});}
       catch(error){if((error as BridgeError).code==='process_missing')missing.add(pid);}
     }));
   }

@@ -56,7 +56,7 @@ export function claudeHistoryExists(configHome:string,sessionId:string):boolean{
 }
 async function alive(identity?:Pick<ProcessIdentity,'pid'|'startedAt'>):Promise<boolean>{
   if(!identity||!liveProcess(identity.pid))return false;
-  try{return(await processIdentity(identity.pid)).startedAt===identity.startedAt;}catch(error){if((error as BridgeError).code==='process_missing')return false;throw error;}
+  try{const current=await processIdentity(identity.pid);return current.startedAt===identity.startedAt&&!['Z','X'].includes(current.state??'');}catch(error){if((error as BridgeError).code==='process_missing')return false;throw error;}
 }
 async function stopProcess(home:string,identity?:Pick<ProcessIdentity,'pid'|'startedAt'>):Promise<void>{
   if(!identity)return;
