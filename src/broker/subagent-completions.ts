@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Store } from '../storage/store.js';
 import type { Peer } from '../types.js';
 import { captureCodexSubagentReadFloor, readCodexSubagentCompletions, type CodexSubagentReadFloor } from '../hosts/codex/codex-subagent-read.js';
+import { CODEX_WAKE_RETRY_MS } from '../hosts/codex/codex-wake.js';
 
 interface Completion {key:string;agentId:string;childTurnId:string;agentPath?:string;floor?:CodexSubagentReadFloor;notified?:boolean;offered?:boolean}
 interface Wake {id:string;channel:string;state:'submitting'|'submitted'|'queued'|'unknown';at:number;own:boolean;keys:string[];batchId?:string;turnId?:string}
@@ -10,7 +11,10 @@ const key=(peerId:string)=>'subagentCompletions:'+peerId;
 
                                     
 export class SubagentCompletions {
+  private inFlight=new Set<string>();
   constructor(private store:Store){}
+                                           
+  private holdsWakeLease(wake:Wake|undefined):boolean{return wake?.own===true&&(this.inFlight.has(wake.id)||Date.now()-wake.at<CODEX_WAKE_RETRY_MS);}
   private scope(peer:Peer):string|undefined{
     const current=this.store.peer(peer.id),pair=this.store.pairFor(peer.id),endpoint=this.store.endpoint(peer.id),binding=this.store.bindings.current(peer.id);
     if(current.host!=='codex'||!['root','fork'].includes(current.kind)||!pair||!current.sessionId||!endpoint?.active||endpoint.pendingContext||binding?.transitioning)return;
@@ -44,7 +48,7 @@ export class SubagentCompletions {
   pending(peer:Peer):boolean{return !!this.get(peer)?.pending.some(completion=>!completion.notified);}
   available(peer:Peer):boolean{return !!this.get(peer)?.pending.some(completion=>!completion.offered);}
   batch(peer:Peer):string|undefined{const value=this.get(peer);return value?.pending.some(completion=>!completion.notified)?value.batchId:undefined;}
-  blocked(peer:Peer):boolean{return this.get(peer)?.wake?.own===true;}
+  blocked(peer:Peer):boolean{return this.holdsWakeLease(this.get(peer)?.wake);}
   status(peer:Peer):{unconfirmed:number;needsWake:number;awaitingContext:number;batchId?:string;wake?:{channel:string;state:Wake['state'];at:number}}|undefined{
     const value=this.get(peer);if(!value?.pending.length)return;
     return{unconfirmed:value.pending.length,needsWake:value.pending.filter(completion=>!completion.notified).length,awaitingContext:value.pending.filter(completion=>!completion.offered).length,
@@ -54,20 +58,22 @@ export class SubagentCompletions {
   reserve(peer:Peer,channel:string):string|undefined{
     const scope=this.scope(peer);if(!scope)return;
     const value=this.get(peer)??{scope,seen:[],pending:[]};
-    if(value.wake?.own)return;
+    if(this.holdsWakeLease(value.wake))return;
     const own=value.pending.some(completion=>!completion.notified),specific=['native','queue','embedded_queue'].includes(channel);
     const keys=own&&specific?value.pending.filter(completion=>!completion.notified).map(completion=>completion.key):[];
     const id=randomUUID();value.wake={id,channel,state:'submitting',at:Date.now(),own,keys,...(value.batchId?{batchId:value.batchId}:{})};
+    this.inFlight.add(id);
     for(const completion of value.pending)if(keys.includes(completion.key))completion.notified=true;
     if(keys.length)delete value.batchId;
     this.store.setSetting(key(peer.id),value);return id;
   }
   outcome(peer:Peer,id:string,state:Wake['state']|'not_submitted',turnId?:string):void{
+    this.inFlight.delete(id);
     const value=this.get(peer);if(value?.wake?.id!==id)return;
     if(state==='not_submitted'){
       for(const completion of value.pending)if(value.wake.keys.includes(completion.key)&&!completion.offered)delete completion.notified;
       value.batchId??=value.wake.batchId;delete value.wake;
-    }else{value.wake.state=state;if(turnId)value.wake.turnId=turnId;}
+    }else{value.wake.state=state;value.wake.at=Date.now();if(turnId)value.wake.turnId=turnId;}
     this.store.setSetting(key(peer.id),value);
   }
   started(peer:Peer,synthetic=false):void{const value=this.get(peer);if(synthetic&&value?.wake){delete value.wake;this.store.setSetting(key(peer.id),value);}}

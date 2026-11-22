@@ -6,6 +6,7 @@ import { fixture } from './support/broker-fixture.js';
 import { temporary } from './support/temporary.js';
 import { registration } from './support/registration.js';
 import { SubagentCompletions } from '../broker/subagent-completions.js';
+import { CODEX_WAKE_RETRY_MS } from '../hosts/codex/codex-wake.js';
 import { BridgeError, DeliveryError } from '../shared/errors.js';
 import { HEALTH_WAKE_NOTICE, WAKE_NOTICE } from '../types.js';
 import { hook as nativeHook } from '../integration/hooks/hook-control.js';
@@ -161,6 +162,89 @@ test('主通道和队列提交结果不明都不重放，明确写入前失败�
   (f.codex as any).queueWake=async(_p:any,_e:any,authorize:()=>Promise<void>)=>{attempts++;await authorize();throw new BridgeError('queue_route_unverified','写入前路由失效');};
   for(let i=0;i<6;i++){await f.signal();t.mock.timers.tick(30000);}
   assert.equal(attempts,3);assert.equal(f.ledger.pending(f.peer()),true);assert.equal(f.ledger.blocked(f.peer()),false);
+});
+
+test('未知完成唤醒超过合并期限后，新搭档消息仍能续跑且不重放完成提醒',async t=>{
+  for(const channel of ['native','queue'] as const)await t.test(channel,async sub=>{
+    sub.mock.timers.enable({apis:['Date'],now:1000000});
+    const f=setup(sub);await f.child();let attempts=0;
+    (f.codex as any).wakeSubagents=async(_p:any,_e:any,_s:any,authorize:()=>Promise<boolean>)=>{
+      if(channel==='queue')throw new DeliveryError('-32601','不支持');
+      attempts++;await authorize();throw new DeliveryError('timeout','确认超时',true);
+    };
+    (f.codex as any).queueWake=async(_p:any,_e:any,authorize:()=>Promise<void>)=>{attempts++;await authorize();throw new DeliveryError('queue_result_unknown','入队未知',true);};
+    await f.signal();assert.equal(attempts,1);
+    sub.mock.timers.tick(CODEX_WAKE_RETRY_MS);
+    await f.signal();assert.equal(attempts,1,'过期只释放合并占用，不能重放未知的完成提醒');
+    assert.equal(f.ledger.pending(f.peer()),false);assert.equal(f.ledger.available(f.peer()),true);
+    const message=f.store.accept(f.pair,f.c,'新的搭档任务','after-unknown');
+    await f.signal();await f.signal();
+    assert.equal(f.codex.delivered.filter(row=>row.id===message.id).length,1,'新消息必须进入原父会话');
+    assert.equal(f.codex.woken.length,1,'原父会话仍须为新搭档任务续跑');
+    assert.equal(attempts,1,'新消息不能重复提交旧的子代理完成提醒');
+    assert.match((await f.prompt(WAKE_NOTICE)).hookSpecificOutput.additionalContext,/own_subagents_completed/);
+  });
+});
+
+test('没有消费边界的历史唤醒预约有期限，完成事实和通知去重不随占用过期',async t=>{
+  for(const state of ['submitting','unknown','queued','submitted'] as const)await t.test(state,async sub=>{
+    sub.mock.timers.enable({apis:['Date'],now:1000000});
+    const f=setup(sub);await f.child();
+    const id=f.ledger.reserve(f.peer(),'native');assert.ok(id);
+    if(state!=='submitting')f.ledger.outcome(f.peer(),id,state);
+    const restored=new SubagentCompletions(f.store);
+    assert.equal(restored.blocked(f.peer()),true);
+    assert.equal(restored.reserve(f.peer(),'native_existing'),undefined);
+    sub.mock.timers.tick(CODEX_WAKE_RETRY_MS);
+    assert.equal(restored.blocked(f.peer()),false);
+    assert.equal(f.ledger.status(f.peer())?.wake?.state,state,'保留未确认唤醒的诊断事实');
+    assert.equal(f.ledger.pending(f.peer()),false,'同一完成提醒仍然不能自动重放');
+    assert.equal(f.ledger.available(f.peer()),true,'未读结果仍可随之后的正常输入领取');
+    assert.ok(restored.reserve(f.peer(),'native_existing'),'既有搭档投递也必须能取得合并预约');
+  });
+});
+
+test('提交超过合并窗口仍不能并发预约，提交返回后才开始计算占用期限',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:1000000});
+  const f=setup(t);await f.child();
+  let entered!:()=>void,finish!:(turn:string)=>void;
+  const started=new Promise<void>(resolve=>entered=resolve),submitted=new Promise<string>(resolve=>finish=resolve);
+  (f.codex as any).wakeSubagents=async(_p:any,_e:any,_s:any,authorize:()=>Promise<boolean>)=>{await authorize();entered();return submitted;};
+  const work=f.signal();await started;
+  try{
+    t.mock.timers.tick(CODEX_WAKE_RETRY_MS+1000);
+    assert.equal(f.ledger.blocked(f.peer()),true,'在途 RPC 不能因年龄放出第二次唤醒');
+    assert.equal(f.ledger.reserve(f.peer(),'native_existing'),undefined,'未走信号串行队列的直接投递也不能重入');
+  }finally{finish('slow-native-turn');}
+  await work;
+  assert.equal(f.ledger.blocked(f.peer()),true,'回执返回后重新起算合并期限');
+  t.mock.timers.tick(CODEX_WAKE_RETRY_MS-1);assert.equal(f.ledger.blocked(f.peer()),true);
+  t.mock.timers.tick(1);assert.equal(f.ledger.blocked(f.peer()),false);
+});
+
+test('合并期限过后仍按原生忙碌状态等待，慢启动的已接受唤醒不会重复续跑',async t=>{
+  for(const stalePeer of [false,true])await t.test(stalePeer?'登记状态滞后':'登记为忙碌',async sub=>{
+    sub.mock.timers.enable({apis:['Date'],now:1000000});
+    const f=setup(sub);await f.child();await f.signal();
+    const original=f.codex.injectionState.bind(f.codex);
+    f.codex.injectionState=async(...args)=>{
+      const value=await original(...args);
+      value.thread.status.type='active';value.thread.turns=[{id:'wake-1',status:'inProgress'}];return value;
+    };
+    if(!stalePeer)f.store.updatePeer(f.x.id,{state:'busy'});
+    sub.mock.timers.tick(CODEX_WAKE_RETRY_MS+1000);
+    const message=f.store.accept(f.pair,f.c,'等待原轮次领取的新任务','slow-start');
+    await f.signal();
+    assert.equal(f.ledger.blocked(f.peer()),false,'合并占用已到期，真正的原生忙碌闸门仍生效');
+    assert.deepEqual(f.counts(),{native:1,queued:0});assert.equal(f.codex.woken.length,0);
+    assert.equal(f.store.message(message.id).state,'accepted');assert.equal(f.codex.delivered.length,0);
+    if(stalePeer)assert.equal(f.broker.codexDirect.status(f.x.id).wait.native_status,'active');
+    f.codex.injectionState=original;
+    const input=await f.prompt(WAKE_NOTICE);assert.match(input.hookSpecificOutput.additionalContext,/own_subagents_completed/);
+    await f.broker.dispatch('receive',{host:'codex',sessionId:'x',callId:'read-slow-start'});
+    await f.hook('Stop',{turn_id:'wake-1'});f.store.updatePeer(f.x.id,{state:'ready'});await f.signal();
+    assert.deepEqual(f.counts(),{native:1,queued:0});assert.equal(f.codex.woken.length,0,'消息由原来的唯一轮次领取');
+  });
 });
 
 test('审批或身份拒绝不借队列绕过；最后入队边界重新核验配对',async t=>{

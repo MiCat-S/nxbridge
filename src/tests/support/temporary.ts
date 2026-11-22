@@ -22,7 +22,8 @@ async function removeFixture(directory:string):Promise<void>{
   }catch(error){
     const code=(error as NodeJS.ErrnoException).code;
     if(code==='ENOENT'&&!existsSync(directory))return;
-    if(attempt>=6||!['EBUSY','EPERM','ENOTEMPTY','EMFILE','ENFILE'].includes(code??''))throw error;
+                                                     
+    if(attempt>=6||!['ENOENT','EBUSY','EPERM','ENOTEMPTY','EMFILE','ENFILE'].includes(code??''))throw error;
                                         
     await delay(200*(attempt+1));
   }
