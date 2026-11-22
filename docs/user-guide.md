@@ -385,7 +385,7 @@ nxbridge 两种情况都支持，但共用后台服务下有几点不同：
 新版 Codex 会把 nxbridge 在后台启动的 Codex 也接到共用后台服务上，这样它什么时候退出就不由 nxbridge 决定了。
 
 - **Linux / WSL 和 Windows：** 只要你的 Codex 支持带令牌的本机连接，nxbridge 会让后台 Codex 单独运行：只在本机监听，用一个只有你的账户能读的随机令牌验证，和你自己的 Codex 互不影响，也不改你的 Codex 配置。旧版本 Codex 照旧。
-- **Mac：** 后台 Codex 同样单独运行，但通过一个只有你的账户能访问的本机 socket 文件连接，还没换成带令牌的本机连接。Codex 会把这个 socket 换成一个指向系统临时目录的链接，nxbridge 会核对链接确实指向这个进程自己正在监听的 socket，再回收或重启。这项核对还没在真机上测过。想帮忙验证的话，可以按安装包里 `tools/macos-validation.md` 第 6 节操作，验证脚本只读取信息、不调用模型，直接在安装包里就能运行，不需要源码。
+- **Mac：** 后台 Codex 同样单独运行，但通过一个只有你的账户能访问的本机 socket 文件连接，还没换成带令牌的本机连接。Codex 会把这个 socket 换成一个指向系统临时目录的链接，nxbridge 会核对链接确实指向这个进程自己正在监听的 socket，再回收或重启。这项核对还没在真机上测过。想自己确认的话，可以按安装包里 `tools/macos-validation.md` 第 6 节操作，这一节只用 nxbridge 自带的命令，不需要源码。
 - 已经在运行的后台 Codex 不会被重启，下次重新拉起时才切换。
 
 nxbridge 不会停止、重启或更新你的共用后台服务；要中断或重开 Codex 会话，请在 Codex 窗口里操作。

@@ -1,6 +1,6 @@
 # macOS 原生验证
 
-nxbridge 在 Windows 和 WSL 上做过原生验证；macOS 靠 Mac 用户的真机反馈逐步补证据。下面的步骤用来补这些证据，结果请连同输出一起反馈。Windows / WSL 通过不能当作 Mac 也通过。
+nxbridge 在 Windows 和 WSL 上做过原生验证，macOS 只在真机上验证过一部分。下面的步骤可以在你自己的 Mac 上确认这些功能是否正常。Windows / WSL 通过不能当作 Mac 也通过。
 
 已在真机上通过（macOS 27.0，Apple Silicon，Codex 0.167.1 / 0.167.2）：
 
@@ -28,6 +28,13 @@ node tools/collect-macos-evidence.mjs --pid <PID> [--home <配置目录>] [--soc
 
 `--home`、`--socket` 和 `unix://` 后面的路径可以用 `~/` 开头。查询线程是否被占用（`sessionHold`）需要同时提供 `--session` 和可连接的 `--endpoint`。只有 `--validate-transfer`（第 1 节）和第 2 节的隔离测试需要源码仓库，在源码目录先 `npm run build` 再运行。
 
+`sessionHold.state` 的含义：
+
+- `loaded` / `not_loaded`：采集器连上了这个服务，只读查询了已加载线程列表（`thread/loaded/list`），这是实测结果。
+- `unobservable`：找不到可连接的端点、没有权限或无法读取，输出里会写原因；这时只有进程是否存活的快照。会话历史一直没有新内容、或者应用里已关掉会话，都不能推断它已经放开。
+
+采集器不会尝试抢占会话或探测写锁。
+
 ## 1. 会话转移
 
 在源码目录运行：
@@ -50,25 +57,6 @@ Mac 上 ChatGPT 应用开着时，它自己的 App Server 一直在运行，nxbr
 
 1. 在 ChatGPT 应用里关掉这个会话；仍提示被占用时，退出 ChatGPT 应用（菜单栏 ChatGPT → 退出，或 ⌘Q）。
 2. 重新运行 `nxbridge adopt codex`（或在 Claude 里再发一次消息，按选择框处理）。
-
-请帮忙测一下应用的服务什么时候真正放开会话，结果决定以后能否放宽这条限制。找到应用 App Server 的 PID（`pgrep -fl "codex app-server"`）和测试会话 ID，在下面三个时间点各运行一次：
-
-```sh
-node tools/collect-macos-evidence.mjs --pid <应用 App Server 的 PID> --session <会话ID> [--endpoint unix:///实际/socket 或 ws://地址] [--home <配置目录>]
-```
-
-| 时间点 | 记录 |
-| --- | --- |
-| 在应用里关掉会话后立刻 | 输出里的 `sessionHold.state` 和 `checkedAt`，以及进程是否还在 |
-| 关掉会话后等 2 分钟 | 同上 |
-| 退出 ChatGPT 应用后 | 同上 |
-
-`sessionHold.state` 的含义：
-
-- `loaded` / `not_loaded`：采集器连上了这个服务，只读查询了已加载线程列表（`thread/loaded/list`），这是实测结果。
-- `unobservable`：找不到可连接的端点、没有权限或无法读取，输出里会写原因；这时只有进程是否存活的快照。会话历史一直没有新内容、或者应用里已关掉会话，都不能推断它已经放开。
-
-采集器不会尝试抢占会话或探测写锁。
 
 ### 手工重入
 
@@ -120,7 +108,7 @@ node tools/run-tests.mjs --test --test-concurrency=1 --test-timeout=180000 dist/
 
    然后取消固定，用命令或删掉文件里那一行都行：不用 `nxbridge reload`，约 30 秒内自动重新核验并转到后台。两种改法请都试一次。
 
-请反馈每一步的 `nxbridge status --json` 里 `hosting` 和 `launches` 两段（可以去掉路径里的用户名）。
+每一步的结果看 `nxbridge status --json` 里的 `hosting` 和 `launches` 两段。
 
 ## 5. 直接唤醒的线程状态核验
 
@@ -134,7 +122,7 @@ node tools/run-tests.mjs --test --test-concurrency=1 --test-timeout=180000 dist/
 
 无法完成核验时，状态栏会说明消息正在等待。在对应 Codex 窗口里输入 `nxbridge pickup`（或 `nxbridge 收信`）可以取件。Codex 会同时收到说明：这句话只是取件，不是在回答问题或批准操作。
 
-请在真机上验证并反馈：
+可以在真机上这样验证：
 
 | 场景 | 应当 |
 | --- | --- |
@@ -145,7 +133,7 @@ node tools/run-tests.mjs --test --test-concurrency=1 --test-timeout=180000 dist/
 | 合上屏幕休眠再唤醒 | 重新核验线程和授权；无法读取时保留消息 |
 | 输入 `nxbridge pickup` | 取到等待中的消息，Codex 不把它当成回答 |
 
-每个场景请附上 `nxbridge status --json` 和一次采集器输出，重点是 `sessionHold` 及进程身份快照。`--pid` 填 daemon 进程的 PID（`pgrep -fl -- '--managed-daemon'`；`app-server` 和 `--managed-daemon` 之间还有别的参数），`--endpoint` 填 `unix://~/.codex/app-server-control/app-server-control.sock`，`--home` 填配置目录，`--session` 填待收信的会话 ID。
+每个场景都可以用 `nxbridge status --json` 和采集器查看结果，重点看 `sessionHold` 和进程身份快照。`--pid` 填 daemon 进程的 PID（`pgrep -fl -- '--managed-daemon'`；`app-server` 和 `--managed-daemon` 之间还有别的参数），`--endpoint` 填 `unix://~/.codex/app-server-control/app-server-control.sock`，`--home` 填配置目录，`--session` 填待收信的会话 ID。
 
 ## 6. 回收 nxbridge 自己启动的后台 Codex
 
@@ -168,14 +156,7 @@ nxbridge 核验三件事，才把它当作自己的后台：
 4. `~/.nxbridge/run/` 里早已失效的链接（目标已不存在的 `cx-*.sock`）应当被清理。
 5. 后台 Claude 成员如果从没真正启动，应当显示“没有已登记的可核验进程，仅剩未结算记录”，并且立即停止自动重试。
 
-被拒时，`nxbridge retire` 的输出会列出核验过程：`requested`（请求的路径）、`resolved`（实际目标）、`expectedTarget`（按 Codex 规则算出的目标）、`expectedPid` / `expectedGeneration`（记录的进程和代次）、`observedGeneration`（实际代次）和 `listenerVerified`（是否核验到这个进程在监听）。被拒请把这段一起反馈。
-
-请反馈：
-- 每一步的输出；
-- `nxbridge doctor` 里 `managedRuntimes` 和 `retirements` 两段；
-- `ls -la ~/.nxbridge/run/` 的结果。
-
-路径里的用户名可以去掉。
+被拒时，`nxbridge retire` 的输出会列出核验过程：`requested`（请求的路径）、`resolved`（实际目标）、`expectedTarget`（按 Codex 规则算出的目标）、`expectedPid` / `expectedGeneration`（记录的进程和代次）、`observedGeneration`（实际代次）和 `listenerVerified`（是否核验到这个进程在监听）。
 
 ## 7. Codex hook 的耗时与三秒时限
 
@@ -197,7 +178,7 @@ Mac 上还没实测，不能直接套用这些数字。
 
 1. 让后台 Codex 正常干一会儿活（至少 20 次工具调用），确认双方照常收到消息提醒；上下文压缩后，恢复信息仍在。
 2. 中断它当前的一轮，确认 Claude 一侧看到它暂停。
-3. 运行下面的命令，把输出贴回来。每类 hook 会列出次数、最近一次、中位数（`p50Ms`）、p95（`p95Ms`）和最大值，单位毫秒。这是 Codex 自己记录的整次耗时，包含外壳启动，会比上面的数字大：
+3. 运行下面的命令查看耗时。每类 hook 会列出次数、最近一次、中位数（`p50Ms`）、p95（`p95Ms`）和最大值，单位毫秒。这是 Codex 自己记录的整次耗时，包含外壳启动，会比上面的数字大：
 
    ```sh
    nxbridge status --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.stringify(JSON.parse(s).capabilities.hookTimings,null,2)))'
@@ -206,5 +187,3 @@ Mac 上还没实测，不能直接套用这些数字。
 4. 在你自己开的 Codex 窗口里退出一次，确认退出时没有明显卡顿。
 
 不要为了测试去改真实配置里的信任记录。
-
-请反馈：第 3 步的输出；如果出现过 `nxbridge hook timed out` 警告，记下当时在做什么。
