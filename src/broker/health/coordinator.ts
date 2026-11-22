@@ -211,7 +211,7 @@ export class BrokerHealthCoordinator {
         if(!homes.length)configHome=this.environment.config.codexHome??codexHome();else if(homes.every(home=>sameDirectory(home,homes[0]!)))configHome=homes[0];
       }
       return issues.map(issue=>({peerId,code:issue.kind,...(includeMessage||issue.kind==='launch_failed'?{message:issue.message}:{}),
-        ...(['hooks_restart_required','contract_inactive'].includes(issue.kind)?{owner,...(owner==='user'&&peer.sessionId?{session_id:peer.sessionId,name:peer.name}:{})}:{}),
+        ...(['hooks_restart_required','contract_inactive','subagent_completion_held'].includes(issue.kind)?{owner,...(owner==='user'&&peer.sessionId?{session_id:peer.sessionId,name:peer.name}:{})}:{}),
         ...(issue.kind==='hooks_trust_required'&&configHome&&!sameDirectory(configHome,codexHome())?{config_home:configHome}:{}),
         ...(issue.kind==='launch_failed'?{retry_command:'nxbridge open '+peer.host+' --member '+peer.id}:{})}));
     }

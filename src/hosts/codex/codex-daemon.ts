@@ -9,7 +9,7 @@ import { normalizedHome } from '../../integration/hooks/session-bindings.js';
 import {codexHome} from '../../shared/local-paths.js';
 import {runCli} from '../../process/host-command.js';
 import {BridgeError,DeliveryError,describeError} from '../../shared/errors.js';
-import {type BridgeConfig,type Peer,type RegisterInput,type CodexPermissionEvidence} from '../../types.js';
+import {HEALTH_WAKE_NOTICE,type BridgeConfig,type Peer,type RegisterInput,type CodexPermissionEvidence} from '../../types.js';
 import { daemonContextChanged, daemonWakeAuthorized, observeDaemonContext } from './daemon-wake.js';
 import { classifyCodexPermission, persistedCodexPermission, observeCodexPermission } from './codex-permission.js';
 import type { RpcClient } from '../../ipc/rpc.js';
@@ -65,9 +65,14 @@ export class CodexDaemons {
       const current=this.wakeScope(peer,endpoint);this.wakeChecks.set(peer.id,{scope,at:Date.now(),ready:ready&&current===scope});return ready&&current===scope;
     }catch{this.wakeChecks.delete(peer.id);return false;}
   }
-  private async readTarget(peer:Peer,endpoint:Endpoint,includeTurns:boolean){
+                                          
+  async queueWakeReady(peer:Peer,endpoint:Endpoint):Promise<boolean>{
+    const scope=this.wakeScope(peer,endpoint);if(!scope)return false;
+    try{const {thread}=await this.readTarget(peer,endpoint,false,true);return thread.status?.type==='idle'&&this.wakeScope(peer,endpoint)===scope;}catch{return false;}
+  }
+  private async readTarget(peer:Peer,endpoint:Endpoint,includeTurns:boolean,connectedOnly=false){
     if(this.closed||!endpoint.daemon||!endpoint.configHome||!endpoint.pid||!endpoint.procStart||!peer.sessionId)throw new DeliveryError('daemon_wake_unavailable','目标共享 daemon 路由不完整。');
-    const connection=await this.connection(normalizedHome(endpoint.configHome),{pid:endpoint.pid,procStart:endpoint.procStart});
+    const connection=connectedOnly?this.clients.get(normalizedHome(endpoint.configHome)):await this.connection(normalizedHome(endpoint.configHome),{pid:endpoint.pid,procStart:endpoint.procStart});
     if(!connection||connection.rpc.closed||connection.pid!==endpoint.pid||connection.procStart!==endpoint.procStart||connection.address!==endpoint.daemon.address)throw new DeliveryError('daemon_identity_changed','共享 daemon 的原生路由已经改变。');
     const thread=includeTurns?await readCodexThread(connection.rpc,peer.sessionId!):(await connection.rpc.request('thread/read',{threadId:peer.sessionId,includeTurns:false},{timeout:5000})).thread as CodexThread;
     if(thread?.id!==peer.sessionId||!interactive(thread)||thread.status?.type==='notLoaded'||this.endedThreads.has(this.threadKey(connection,peer.sessionId)))throw new DeliveryError('daemon_thread_ended','原生主会话已卸载或不再可投递。');
@@ -97,6 +102,15 @@ export class CodexDaemons {
   async continueInjected(peer:Peer,endpoint:Endpoint):Promise<string>{
     const rpc=await this.mutationTarget(peer,endpoint),result=await rpc.request('turn/start',{threadId:peer.sessionId,input:[]},{mutation:true});
     this.wakeChecks.delete(peer.id);return result.turn.id;
+  }
+  async wake(peer:Peer,endpoint:Endpoint,beforeSubmit:()=>Promise<boolean>):Promise<string|undefined>{
+    const scope=this.wakeScope(peer,endpoint),rpc=await this.mutationTarget(peer,endpoint);
+    if(!await beforeSubmit())return;
+    if(this.wakeScope(peer,endpoint)!==scope)throw new DeliveryError('daemon_wake_unavailable','共享 daemon 唤醒授权或当前上下文已改变。');
+    const result=await rpc.request('turn/start',{threadId:peer.sessionId,input:[{type:'text',text:HEALTH_WAKE_NOTICE}]},{mutation:true});
+    this.wakeChecks.delete(peer.id);
+    if(typeof result?.turn?.id!=='string'||!result.turn.id)throw new DeliveryError('wake_result_unknown','原生唤醒没有返回可核验的轮次。',true);
+    return result.turn.id;
   }
   private threadKey(domain:Pick<DaemonDomain,'configHome'|'pid'|'procStart'>,id:string):string{return JSON.stringify([normalizedHome(domain.configHome),domain.pid,domain.procStart,id]);}
   private async endDead(configHome:string,current?:DaemonDomain):Promise<void>{

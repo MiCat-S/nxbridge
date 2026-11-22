@@ -10,7 +10,7 @@ export class CodexWakeSignals {
   constructor(private store:Store,private now=Date.now){}
   status(peerId:string):WakeReservation|undefined{return this.store.setting<WakeReservation>('codexWake:'+peerId);}
   clear(peerId:string):void{if(this.status(peerId))this.store.setSetting('codexWake:'+peerId,null);}
-  async signal(peerId:string,scope:string,anchor:string,submit:()=>Promise<void>):Promise<void>{
+  async signal(peerId:string,scope:string,anchor:string,submit:()=>Promise<void|false>):Promise<void>{
     if(this.active.has(peerId))return;
     this.active.add(peerId);
     try{
@@ -22,7 +22,7 @@ export class CodexWakeSignals {
       }
       const reservation:WakeReservation={scope,anchor,attempts:same?previous.attempts+1:1,at:this.now()};
       this.store.setSetting('codexWake:'+peerId,reservation);
-      try{await submit();}
+      try{if(await submit()===false&&this.status(peerId)?.at===reservation.at)this.store.setSetting('codexWake:'+peerId,previous??null);}
       catch(error){if(this.status(peerId)?.at===reservation.at)this.store.setSetting('codexWake:'+peerId,{...reservation,error:describeError(error).slice(0,1200)});this.store.event('wake.unknown',{peerId,error:describeError(error).slice(0,1200)});}
     }finally{this.active.delete(peerId);}
   }

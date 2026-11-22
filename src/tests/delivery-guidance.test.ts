@@ -55,6 +55,13 @@ test('status 文本：模型服务挡住 Codex 时显示原因而不是原因未
   assert.match(formatStatus({paired:true,self:{id:'c',host:'claude',name:'Claude',state:'ready'},partner:partner(false),pending:0,questions:0}),/原因未知/);
 });
 
+test('status 文本：子代理已做完但没法确认主线程接着处理时写出原因，不说成没处理',()=>{
+  const partner=(childCompletions?:any)=>({id:'x',host:'codex',name:'Codex',state:'ready',...(childCompletions?{childCompletions}:{})});
+  const text=formatStatus({paired:true,self:{id:'c',host:'claude',name:'Claude',state:'ready'},partner:partner({unconfirmed:1,needsWake:1,awaitingContext:1,batchId:'b',hold:{batchId:'b',reason:'唤醒次数已用完，自动尝试已停止'}}),pending:0,questions:0});
+  assert.match(text,/子代理已做完，尚未确认主线程接着处理：唤醒次数已用完，自动尝试已停止/);assert.doesNotMatch(text,/未读|没人/);
+  assert.doesNotMatch(formatStatus({paired:true,self:{id:'c',host:'claude',name:'Claude',state:'ready'},partner:partner({unconfirmed:1,needsWake:0,awaitingContext:1,hold:null}),pending:0,questions:0}),/子代理/);
+});
+
 test('读不到最新一步时状态只说进度暂时无法观测，不说没有进展；有进度证据时照旧',()=>{
   const status=(health:any)=>formatStatus({paired:true,self:{id:'c',host:'claude',name:'Claude',state:'busy'},partner:{id:'x',host:'codex',name:'Codex',state:'busy',health},pending:0,questions:0});
   const silent={state:'silent',turnId:'t',lastProgressAt:Date.now()-11*60000,tools:[]};

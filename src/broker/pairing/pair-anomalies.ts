@@ -26,6 +26,7 @@ export interface IntegrationEvidence {
   currentModAt?:number;
   hookTimeouts?:{count:number;firstAt:number;lastAt:number;limitSeconds?:number};hookTrustIssue?:HookTrustIssue;
   wakeQueueError?:string;pickup?:{exhausted?:boolean;attempts:number;error?:string;anchor?:string;scope?:string};
+  subagentHold?:{batchId:string;reason:string};
                                                                     
   failedTurnId?:string;
 }
@@ -33,7 +34,7 @@ export const hookTimedOut=(error:string)=>/\bhook timed out\b|\bhook[^;\n]*\btim
                                                        
 export interface PairIssue {kind:string;message:string;factKey?:string;terminal?:boolean;firstSeenAt?:number;asOf?:number}
                                               
-const TERMINAL_KINDS=new Set(['turn_failed','continuation_failed','pickup_exhausted']);
+const FACT_KINDS=new Set(['turn_failed','continuation_failed','pickup_exhausted','subagent_completion_held']);
 export interface PairObservation {
   nativeHistory?:{status:string;reason?:string};
                                                         
@@ -55,6 +56,7 @@ export function pairIssues(value:PairObservation):PairIssue[]{
                                                             
   const failedTurn=()=>{if(health?.state==='failed'&&!value.questionPending)add('turn_failed',`${peer.host} turn ${health.turnId} failed${health.error?': '+health.error:''}`,JSON.stringify([peer.id,health.turnId]),true);};
   if(value.pair.archived||endpoint?.pendingContext)return issues;
+  if(peer.host==='codex'&&integration.subagentHold)add('subagent_completion_held','Codex 的子代理已做完，尚未确认主线程接着处理（'+integration.subagentHold.reason+'）；请在原 Codex 窗口继续或查看 nxbridge status/doctor；不要重跑子代理',integration.subagentHold.batchId);
                                                                
                                                 
   if(peer.state==='offline'){if(endpoint)failedTurn();return issues;}
@@ -194,11 +196,12 @@ export class PairAnomalies {
     });
     return{peerId:peer.id,source:'codex hook/completed',events};
   }
-  integration(peer:Peer,input:{nativeHook?:{event:string;durationMs:number};turn?:true;turnFailed?:true;turnId?:string;hook?:true;hookSeen?:true;sessionStart?:true;nativeInput?:true;hookError?:string;hookTrustIssue?:HookTrustIssue|null;modVersion?:string;modRevision?:string;mod?:true;mcp?:true;wakeQueueError?:string|null;pickup?:IntegrationEvidence['pickup']|null}):void{
+  integration(peer:Peer,input:{nativeHook?:{event:string;durationMs:number};turn?:true;turnFailed?:true;turnId?:string;hook?:true;hookSeen?:true;sessionStart?:true;nativeInput?:true;hookError?:string;hookTrustIssue?:HookTrustIssue|null;modVersion?:string;modRevision?:string;mod?:true;mcp?:true;wakeQueueError?:string|null;pickup?:IntegrationEvidence['pickup']|null;subagentHold?:IntegrationEvidence['subagentHold']|null}):void{
     const value=this.currentEvidence(peer);
     if(input.sessionStart){value.nativeSessionAt=Date.now();delete value.firstNativeInteractionAt;}
     if((input.nativeInput||input.turn)&&value.firstNativeInteractionAt===undefined)value.firstNativeInteractionAt=Date.now();
     if(input.pickup!==undefined){if(input.pickup)value.pickup=input.pickup;else delete value.pickup;}
+    if(input.subagentHold!==undefined){if(input.subagentHold)value.subagentHold=input.subagentHold;else delete value.subagentHold;}
     if(input.wakeQueueError!==undefined){if(input.wakeQueueError)value.wakeQueueError=input.wakeQueueError;else delete value.wakeQueueError;}
                                                         
     if(input.turn){value.lastTurnAt=Date.now();value.lastTurnId=input.turnId;value.turnsWithoutHook=input.turnId&&value.lastHookTurnId===input.turnId?0:value.turnsWithoutHook+1;}
@@ -244,7 +247,7 @@ export class PairAnomalies {
       const value:Incidents={scope,issues:pairIssues({nativeHistory:this.store.setting('codexHistoryCompatibility:'+peer.id),continuation:direct?.continuation?{...direct.continuation,scope:direct.scope}:undefined,pair,peer,endpoint,partnerPermission:partner.permission,home:this.home,now,messages,transitioning:binding?.transitioning??false,questionPending:this.store.questions(true).some(q=>q.from===peer.id||q.to===peer.id),health,integration,version:this.version,modRevision:MOD_REVISION,replyContractActive:!!this.store.setting('replyContract:'+peer.id),syncReminder,unanswered:syncReminder?this.store.seenSinceLastSendFacts(pair.id,peer.id,binding?.activatedAt??pair.createdAt):undefined,lastMessage:syncReminder?lastMessage:undefined}),notices:[]};
       const receipt=this.store.setting<{sessionId?:string;reportedAt?:number;diagnostic:{consecutive:number;last_error:{at:number}}}>('modReceiptDiagnostic:'+peer.id);
                                                                           
-      const same=(row:{kind:string;message:string;factKey?:string},issue:PairIssue)=>row.kind===issue.kind&&(issue.kind==='mod_stale'?row.message===issue.message:TERMINAL_KINDS.has(issue.kind)?row.factKey===issue.factKey:true);
+      const same=(row:{kind:string;message:string;factKey?:string},issue:PairIssue)=>row.kind===issue.kind&&(issue.kind==='mod_stale'?row.message===issue.message:FACT_KINDS.has(issue.kind)?row.factKey===issue.factKey:true);
       const recent=previous?.scope===scope?[...previous.issues,...(previous.gone??[]).filter(row=>now-row.goneAt<FLAP_MS)]:[];
       for(const issue of value.issues){const old=recent.find(row=>same(row,issue));issue.firstSeenAt=old?.firstSeenAt??now;issue.asOf=integration.modObservation?.observedAt??now;}
       if(previous?.scope===scope){
@@ -282,12 +285,12 @@ export class PairAnomalies {
       const noticeTier=(issue:PairIssue,target:string):3|4=>issue.kind==='mod_stale'&&target===peer.id?(staleNotice?.tier??3):tier(issue)===4?4:3;
                                       
                                                      
-      for(const notice of previous?.notices??[])if(previous?.scope!==scope||!value.issues.some(issue=>issue.kind===notice.kind&&targets(issue).includes(notice.recipient)&&(!TERMINAL_KINDS.has(issue.kind)||issue.factKey===notice.factKey))){this.notices.cancel(pair.id,notice.recipient,notice.id);this.store.event('health.pair.cancel',{pairId:pair.id,peerId:peer.id,recipient:notice.recipient,noticeId:notice.id,kind:notice.kind,scopeChanged:previous?.scope!==scope,inIssues:value.issues.some(issue=>issue.kind===notice.kind),site:site??null});}else value.notices.push(notice);
+      for(const notice of previous?.notices??[])if(previous?.scope!==scope||!value.issues.some(issue=>issue.kind===notice.kind&&targets(issue).includes(notice.recipient)&&(!FACT_KINDS.has(issue.kind)||issue.factKey===notice.factKey))){this.notices.cancel(pair.id,notice.recipient,notice.id);this.store.event('health.pair.cancel',{pairId:pair.id,peerId:peer.id,recipient:notice.recipient,noticeId:notice.id,kind:notice.kind,scopeChanged:previous?.scope!==scope,inIssues:value.issues.some(issue=>issue.kind===notice.kind),site:site??null});}else value.notices.push(notice);
       const managed=this.store.setting<{pairId:string;state:string}>('managedRecovery:'+peer.id);
                                                                      
-      if(!pair.paused)for(const issue of value.issues.filter(issue=>(peer.launchFailure||!['paused','needsHuman','offline'].includes(peer.state)||peer.state==='offline'&&issue.kind==='turn_failed')&&(issue.kind!=='launch_failed'||managed?.pairId!==pair.id||managed.state==='closed')))for(const target of targets(issue)){
+      if(!pair.paused)for(const issue of value.issues.filter(issue=>(issue.kind==='subagent_completion_held'||peer.launchFailure||!['paused','needsHuman','offline'].includes(peer.state)||peer.state==='offline'&&issue.kind==='turn_failed')&&(issue.kind!=='launch_failed'||managed?.pairId!==pair.id||managed.state==='closed')))for(const target of targets(issue)){
         const existing=value.notices.find(n=>n.kind===issue.kind&&n.recipient===target),id=existing?.id??randomUUID(),recipientPeer=target===peer.id?peer:partner,other=target===peer.id?partner:peer;
-        if(!existing)value.notices.push({id,recipient:target,kind:issue.kind,...(TERMINAL_KINDS.has(issue.kind)&&issue.factKey!==undefined?{factKey:issue.factKey}:{})});
+        if(!existing)value.notices.push({id,recipient:target,kind:issue.kind,...(FACT_KINDS.has(issue.kind)&&issue.factKey!==undefined?{factKey:issue.factKey}:{})});
         const fallback=target!==peer.id&&['mod_missing','mod_stale'].includes(issue.kind)?' User guidance only: the affected Claude window was already notified, but its Mod is missing or its latest receipt failed. Tell user to run native /reload-plugins there only if still unresolved; do not relay this to Claude or repeat a reload already handled.':'';
         const scope=noticeScope(pair,recipientPeer,other,(target===peer.id?binding:partnerBinding)?.epoch,(target===peer.id?partnerBinding:binding)?.epoch),evidence=issue.kind==='hooks_timeout'?resourceEvidence(this.resources?.snapshot().sample):'';let message=`nxbridge runtime monitor (not partner reply or user msg): ${peer.host}: ${issue.message}.${fallback} Facts only; inspect and decide; no task replay; AI actions limited to the explicitly scoped steps above.${evidence?' '+evidence:''}`;
         const tierFor=noticeTier(issue,target);

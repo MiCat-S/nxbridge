@@ -7,7 +7,7 @@ import { VERSION } from '../version.js';
 import { z } from 'zod';
 import { permissionGuidance, permissionFacts } from '../integration/mcp/permission-guidance.js';
 import {codexHookApproval,observeCodexPermission} from '../hosts/codex/codex-permission.js';
-import { authorizeDaemonWake } from '../hosts/codex/daemon-wake.js';
+import { authorizeDaemonWake, daemonContextChanged, daemonWakeAuthorized } from '../hosts/codex/daemon-wake.js';
 import { changeNotices, settleChangedPair } from './pairing/pair-changes.js';
 import { Store, type PendingMessageFacts } from '../storage/store.js';
 import { managedRegistration, managedCodexRegistration, managedDescendant, clearManagedChildConflict } from '../hosts/managed-registration.js';
@@ -31,6 +31,7 @@ import {type ServiceOrigin} from '../ipc/ipc.js';
 import { Questions } from '../integration/mcp/questions.js';
 import { fileHintFields } from './delivery/file-references.js';
 import { References } from './delivery/references.js';
+import { SubagentCompletions } from './subagent-completions.js';
 import { runtimeProfile } from './profiles/runtime-profile.js';
 import { type PartnerProfiles, modelProfileSchema, hasProfile } from './profiles/partner-profile.js';
 import { PartnerProfileCoordination } from './profiles/coordination.js';
@@ -126,6 +127,7 @@ export class Broker {
   private readonly profileCoordination:PartnerProfileCoordination;
   readonly questions:Questions;
   readonly references:References;
+  readonly subagentCompletions:SubagentCompletions;
   readonly recovery:Recovery;
   readonly managedRecovery:ManagedRecovery;
   private takeovers:Takeovers;
@@ -151,6 +153,7 @@ export class Broker {
   private wakeSignals:EmbeddedWakeSignals;
   private codexWake:CodexWakeSignals;
   private codexDirect:CodexDirectDelivery;
+  private codexWakeWork=new Map<string,Promise<void|typeof SKIPPED>>();
   private lastReconcile=0;
   private lastMaintenance=0;
   private recordMaintenance?:Promise<void>;
@@ -187,10 +190,17 @@ export class Broker {
     this.daemons=new CodexDaemons(store,config,home,input=>this.register(input));
     this.wakeSignals=new EmbeddedWakeSignals(store);
     this.codexWake=new CodexWakeSignals(store);
+    this.subagentCompletions=new SubagentCompletions(store);
     this.codexDirect=new CodexDirectDelivery(store,{
       injectionState:(peer,endpoint,options)=>(endpoint.daemon?this.daemons:adapters.codex).injectionState(peer,endpoint,options),
       inject:(peer,endpoint,callId,output)=>(endpoint.daemon?this.daemons:adapters.codex).inject(peer,endpoint,callId,output),
-      continueInjected:(peer,endpoint)=>(endpoint.daemon?this.daemons:adapters.codex).continueInjected(peer,endpoint)
+      continueInjected:async(peer,endpoint)=>{
+        const id=this.subagentCompletions.reserve(peer,'native_existing');
+        if(!id)throw new DeliveryError('wake_coalesced','父会话已有待消费的唤醒。');
+        try{const turn=await(endpoint.daemon?this.daemons:adapters.codex).continueInjected(peer,endpoint);this.subagentCompletions.outcome(peer,id,'submitted',turn);return turn;}
+                                               
+        catch(error){this.subagentCompletions.outcome(peer,id,'not_submitted');throw error;}
+      }
     });
     this.foregroundHealth=new ForegroundHealth(store);
     this.questions=new Questions(store,config);
@@ -628,7 +638,7 @@ export class Broker {
     const endpoint=this.runtimeEndpoint(peer.id),pair=this.store.pairFor(peer.id);
     this.adapters[peer.host].setEnabled?.(peer,endpoint,enabled,!enabled&&!this.store.endpoints().some(value=>value.peerId!==peer.id&&value.active&&value.address===endpoint?.address));
     if(!enabled){
-      this.wakeSignals.consumed(peer.id);this.codexWake.clear(peer.id);this.identityConflicts.delete(peer.id);
+      this.wakeSignals.consumed(peer.id);this.codexWake.clear(peer.id);this.subagentCompletions.started(peer,true);this.identityConflicts.delete(peer.id);
       if(pair)for(const id of [pair.claude,pair.codex])for(const notice of this.deliveryHealth.peek(pair.id,id))this.deliveryHealth.cancel(pair.id,id,notice.id);
     }else{
       this.memberLifecycle.clearRetryDelay(peer.id);queueMicrotask(()=>void this.pump());
@@ -1109,6 +1119,7 @@ export class Broker {
     });
   }
   status(actor?:Actor):unknown {
+    for(const pair of this.store.pairs())this.store.faults.sync('subagent_hold:'+pair.codex,()=>this.refreshSubagentHold(this.store.peer(pair.codex)));
     const retirements=Object.entries(this.store.setting<Record<string,RetirementRecord>>('processRetirements')??{}).map(([peerId,value])=>({peerId,...value,exhausted:value.attempts>=3||value.nextAt===Number.MAX_SAFE_INTEGER,action:'nxbridge retire --member '+peerId}));
     const background=claudeBackground(this.home,this.config),observer=actor?this.actor(actor):undefined,pairScope=observer?this.store.pairFor(observer.id):undefined;
     const ids=(observer?pairScope?[pairScope.claude,pairScope.codex]:[observer.id]:this.store.peers().map(peer=>peer.id)).filter(id=>this.enabled(id));
@@ -1122,7 +1133,7 @@ export class Broker {
     };
     const withHealth=(peer:Peer)=>{
       let result:unknown={...peer,diagnosticUnavailable:true};
-      this.store.faults.sync('status:'+peer.id,()=>{result={...describePeer(peer),partner_profile:this.profiles.view(peer)};});return result;
+      this.store.faults.sync('status:'+peer.id,()=>{const children=this.subagentCompletions.status(peer);result={...describePeer(peer),partner_profile:this.profiles.view(peer),...(children?{childCompletions:{...children,hold:this.pairAnomalies.evidence(peer).subagentHold??null}}:{})};});return result;
     };
     if(!actor){const pairs=this.store.pairs();return{pairs,...(pairs.length<=1?{pair:pairs[0]??null}:{}),peers:this.store.peers().map(withHealth),lostPairs:this.store.faults.map('status_loss',this.store.peers(),peer=>peer.id,peer=>{const loss=pairLossView(this.store,peer,this.config);return loss?[{...loss,member_id:peer.id,member_name:peer.name}]:[];}).flat(),bindings:this.store.bindings.all(),endpoints:this.store.endpoints(),messages:this.store.messages(100),questions:this.store.questions(),degraded:this.store.faults.status(),communicationTips:this.store.faults.map('status_tips',this.store.peers(),peer=>peer.id,p=>{const stats=this.communicationTips.summary(p.id);return stats?[{peerId:p.id,host:p.host,...stats}]:[];}).flat(),capabilities:{compatibilityWake:this.config.compatibilityWake,hookObserved:this.store.setting('lastHook')??null,...capability}};}
     const peer=this.actor(actor),pair=this.store.pairFor(peer.id);
@@ -1279,7 +1290,7 @@ export class Broker {
       const identitiesReady=await this.pumpStage('codex_identities',()=>this.checkCodexIdentities());
       if(this.stopped)return;
       await this.pumpStage('claude_inbound',()=>this.claudeInbound.sweep());
-      for(const pair of this.store.pairs())await this.pumpStage('notice_conditions:'+pair.id,()=>this.runtimeHealth.refreshNoticeConditions(pair,'periodic_pump'));
+      for(const pair of this.store.pairs())await this.pumpStage('notice_conditions:'+pair.id,()=>{this.refreshSubagentHold(this.store.peer(pair.codex));this.runtimeHealth.refreshNoticeConditions(pair,'periodic_pump');});
       for(const peer of this.store.peers())if(!this.store.pairFor(peer.id)&&['root','fork'].includes(peer.kind))await this.pumpStage('cooperation_unpaired:'+peer.id,()=>this.communicationTips.cooperation.observe(peer));
       await this.pumpStage('delivery_health',()=>this.runtimeHealth.checkDeliveryHealth());
       if(this.stopped)return;
@@ -1290,6 +1301,7 @@ export class Broker {
       if(!foregroundReady||!windowsReady||!pendingReady||!identitiesReady)return;
       const byTarget=new Map<string,PendingMessageFacts[]>();for(const m of this.store.pendingFacts()){const list=byTarget.get(m.to)??[];list.push(m);byTarget.set(m.to,list);}
       for(const pair of this.store.pairs())if(!pair.paused&&this.codexDirect.pending(pair.codex)&&!byTarget.has(pair.codex))byTarget.set(pair.codex,[]);
+      for(const pair of this.store.pairs())if(!pair.paused&&this.subagentCompletions.pending(this.store.peer(pair.codex))&&!byTarget.has(pair.codex))byTarget.set(pair.codex,[]);
                                    
       for(const id of byTarget.keys())if(!recoveries.has(id))recoveries.set(id,this.memberLifecycle.schedulePairedRecovery(id,true));
       const deliveries=[...byTarget].map(([id,messages])=>this.pumpStage('delivery:'+id,async()=>{
@@ -1433,34 +1445,116 @@ export class Broker {
       return work;
     }));
   }
+  private serialCodexWake(peer:Peer,work:()=>Promise<void|typeof SKIPPED>):Promise<void|typeof SKIPPED>{
+    const active=this.codexWakeWork.get(peer.id);if(active)return active;
+    const next=work().finally(()=>{if(this.codexWakeWork.get(peer.id)===next)this.codexWakeWork.delete(peer.id);});
+    this.codexWakeWork.set(peer.id,next);return next;
+  }
+  private codexWakeAllowed(peer:Peer,endpoint:Endpoint,pairId:string):boolean{
+    const current=this.store.peer(peer.id),pair=this.store.pairFor(peer.id),active=this.store.endpoint(peer.id);
+    return !this.stopped&&pair?.id===pairId&&!pair.paused&&this.enabled(pair.claude)&&this.enabled(pair.codex)
+      &&current.sessionId===peer.sessionId&&current.state==='ready'&&!hostingGate(this.store,current)&&!this.profiles.blocks(current)
+      &&!this.memberLifecycle.isRestarting(peer.id)&&!this.memberLifecycle.isRetiring(peer.id)&&!this.store.setting('managedSessionConflict:'+peer.id)
+      &&!!active?.active&&active.epoch===endpoint.epoch&&active.address===endpoint.address&&active.bindingEpoch===endpoint.bindingEpoch
+      &&!active.pendingContext&&!this.store.bindings.current(peer.id)?.transitioning;
+  }
+  private subagentContextAllowed(peer:Peer,synthetic:boolean):boolean{
+    const current=this.store.peer(peer.id),pair=this.store.pairFor(peer.id),endpoint=this.store.endpoint(peer.id);
+    return !this.stopped&&!!pair&&!pair.paused&&this.enabled(pair.claude)&&this.enabled(pair.codex)
+      &&current.sessionId===peer.sessionId
+      &&!hostingGate(this.store,current)&&!this.profiles.blocks(current)&&!['paused','needsHuman','offline'].includes(current.state)
+      &&!this.memberLifecycle.isRestarting(peer.id)&&!this.memberLifecycle.isRetiring(peer.id)&&!this.store.setting('managedSessionConflict:'+peer.id)
+      &&!!endpoint?.active&&!endpoint.pendingContext&&!this.store.bindings.current(peer.id)?.transitioning
+      &&(!synthetic||!endpoint.daemon||daemonWakeAuthorized(this.store,pair)&&!daemonContextChanged(this.store,current,endpoint));
+  }
+  private refreshSubagentHold(peer:Peer):void{
+    const view=this.subagentCompletions.status(peer),pair=this.store.pairFor(peer.id),endpoint=view?this.store.endpoint(peer.id):undefined,retry=this.codexWake.status(peer.id);
+    let reason:string|undefined;
+    if(view?.batchId&&pair&&(view.needsWake||view.awaitingContext)){
+      if(pair.paused)reason='配对已暂停';
+      else if(!this.enabled(pair.claude)||!this.enabled(pair.codex))reason='nxbridge 已禁用';
+      else if(peer.state==='paused')reason=peer.pauseReason==='interrupted'?'用户已中断主线程':'主线程已暂停';
+      else if(peer.state==='needsHuman')reason='原生会话正在等待人工处理';
+      else if(hostingGate(this.store,peer))reason='宿主交接尚未完成';
+      else if(this.profiles.blocks(peer))reason='模型设置正在核验，投递暂缓';
+      else if(this.store.setting('managedSessionConflict:'+peer.id))reason='原生会话身份冲突，投递暂缓';
+      else if(peer.state==='busy')reason=undefined;
+      else if(!endpoint||['offline','unknown','starting'].includes(peer.state))reason='当前原生会话不可达或尚未核验';
+      else if(endpoint.daemon&&(!daemonWakeAuthorized(this.store,pair)||daemonContextChanged(this.store,peer,endpoint)))reason='用户窗口没有当前上下文的主动唤醒授权';
+      else if(endpoint.mode==='embedded'&&!endpoint.daemon&&this.config.compatibilityWake!=='notify')reason='此用户窗口未启用兼容唤醒';
+      else if(view.wake?.state==='unknown')reason='上次唤醒结果不明，未重复提交';
+      else if(view.wake&&Date.now()-view.wake.at>=30000)reason=view.wake.state==='queued'?'提醒已入队，尚未观察到主线程消费':'原生已接受提醒，尚未确认主线程继续';
+      else if(view.needsWake&&retry?.anchor===view.batchId&&(retry.exhausted||retry.error))reason=retry.exhausted?'唤醒次数已用完，自动尝试已停止':'唤醒通道未通过核验：'+retry.error;
+    }
+    const hold=reason&&view?.batchId?{batchId:view.batchId,reason}:null,previous=this.pairAnomalies.evidence(peer).subagentHold;
+    if(JSON.stringify(previous??null)===JSON.stringify(hold))return;
+    this.pairAnomalies.integration(peer,{subagentHold:hold});
+    if(pair)this.runtimeHealth.refreshNoticeConditions(pair,'subagent_completion_hold');
+  }
+  private async submitCodexSignal(peer:Peer,channel:string,guard:()=>boolean,submit:(authorize:()=>Promise<boolean>)=>Promise<void|string|undefined>,queued=false):Promise<boolean>{
+    let id:string|undefined;
+    try{
+      const result=await submit(async()=>{if(!guard())return false;id=this.subagentCompletions.reserve(peer,channel);return !!id;});
+      if(id)this.subagentCompletions.outcome(peer,id,channel==='native'&&result===undefined?'not_submitted':queued?'queued':'submitted',typeof result==='string'?result:undefined);
+      return !!id&&(channel!=='native'||result!==undefined);
+    }catch(error){
+      const notSubmitted=channel==='queue'?(error as {code?:string}).code!=='queue_result_unknown':(error as {uncertain?:boolean}).uncertain===false;
+      if(id)this.subagentCompletions.outcome(peer,id,notSubmitted?'not_submitted':'unknown');
+      throw error;
+    }
+  }
+  private async signalSubagentWake(peer:Peer,endpoint:Endpoint,pair:Pair):Promise<void>{
+    const batch=this.subagentCompletions.batch(peer);if(!batch||this.subagentCompletions.blocked(peer))return;
+    const guard=()=>this.codexWakeAllowed(peer,endpoint,pair.id)&&this.subagentCompletions.pending(peer)&&!this.subagentCompletions.blocked(peer);
+    const scope=JSON.stringify([pair.id,peer.sessionId,endpoint.epoch,endpoint.bindingEpoch]);
+    await this.codexWake.signal(peer.id,scope,batch,async()=>{
+      if(!guard())return false;
+      try{
+        return await this.submitCodexSignal(peer,'native',guard,authorize=>endpoint.daemon?this.daemons.wake(peer,endpoint,authorize):this.adapters.codex.wakeSubagents(peer,endpoint,this.runtimeHealth.abortSignal,authorize))?undefined:false;
+      }catch(error){
+                                                      
+        const safe=error instanceof DeliveryError&&!error.uncertain&&['attach_failed','disconnected','timeout','daemon_identity_changed','-32601','method_not_found','unsupported'].includes(error.code);
+        if(!safe||!guard())throw error;
+        this.store.event('subagent.wake.fallback',{peerId:peer.id,batchId:batch,reason:error.code});
+        return await this.submitCodexSignal(peer,'queue',guard,authorize=>this.adapters.codex.queueWake(peer,endpoint,async()=>{
+          if(!await(endpoint.daemon?this.daemons:this.adapters.codex).queueWakeReady(peer,endpoint)||!await authorize())throw new DeliveryError('wake_unavailable','父会话已不再满足唤醒条件。');
+        },()=>{}),true)?undefined:false;
+      }
+    });
+  }
   private async signalEmbeddedWake(peer:Peer,endpoint:Endpoint):Promise<void>{
+    try{await this.serialCodexWake(peer,()=>this.signalEmbeddedWakeInner(peer,endpoint));}finally{this.refreshSubagentHold(this.store.peer(peer.id));}
+  }
+  private async signalEmbeddedWakeInner(peer:Peer,endpoint:Endpoint):Promise<void>{
     this.requireEnabled(peer);
     const pair=this.store.pairFor(peer.id),current=this.store.peer(peer.id);
-    if(this.stopped||!pair||pair.paused||current.state!=='ready'||endpoint.mode!=='embedded'||endpoint.daemon||!peer.sessionId||endpoint.pendingContext)return;
+    if(!pair||endpoint.mode!=='embedded'||endpoint.daemon||!peer.sessionId||!this.codexWakeAllowed(peer,endpoint,pair.id)||this.subagentCompletions.blocked(peer))return;
     const config={...this.config,...(endpoint.configHome?{codexHome:endpoint.configHome}:{})},home=config.codexHome;
     if(!home)return;
-    const needed=()=>this.store.pendingCount(peer.id)>0||this.deliveryHealth.peek(pair.id,peer.id).some(n=>n.wake===true);
+    const needed=()=>this.store.pendingCount(peer.id)>0||this.deliveryHealth.peek(pair.id,peer.id).some(n=>n.wake===true)||this.subagentCompletions.pending(peer);
     if(!needed())return;
     const scope=JSON.stringify([pair.id,peer.sessionId,endpoint.epoch,endpoint.bindingEpoch]);
     const error=await this.wakeSignals.signal(peer.id,scope,home,peer.sessionId,async()=>{
-      const fresh=this.store.pairFor(peer.id),active=this.store.endpoint(peer.id);
-      if(!this.enabled(peer.id)||this.stopped||this.profiles.blocks(this.store.peer(peer.id))||!fresh||fresh.id!==pair.id||fresh.paused||this.store.peer(peer.id).state!=='ready'||active?.epoch!==endpoint.epoch||!needed())return;
+      if(!this.codexWakeAllowed(peer,endpoint,pair.id)||this.subagentCompletions.blocked(peer)||!needed())return;
       const message=this.store.pendingCount(peer.id)?WAKE_NOTICE:HEALTH_WAKE_NOTICE;
-      await runCli('codex',['queue','--thread',peer.sessionId!,'--message',message],{config,cwd:peer.cwd,home:this.home});
+      await this.submitCodexSignal(peer,'embedded_queue',()=>this.codexWakeAllowed(peer,endpoint,pair.id)&&needed(),authorize=>runCli('codex',['queue','--thread',peer.sessionId!,'--message',message],{config,cwd:peer.cwd,home:this.home,beforeSpawn:async()=>{if(!await authorize())throw new DeliveryError('wake_unavailable','父会话已不再满足唤醒条件。');}}).then(()=>{}),true);
     });
     this.pairAnomalies.integration(current,{wakeQueueError:error});
   }
   private async signalCodexWake(peer:Peer,endpoint:Endpoint):Promise<void|typeof SKIPPED>{
-    if(!this.incidents.canAttempt(peer,endpoint))return SKIPPED;
-    try{return await this.signalCodexWakeInner(peer,endpoint);}catch(error){this.incidents.failed(peer,endpoint,error,this.store.pendingFacts(peer.id).map(message=>message.id));throw error;}
+    return this.serialCodexWake(peer,async()=>{
+      if(!this.incidents.canAttempt(peer,endpoint))return SKIPPED;
+      try{return await this.signalCodexWakeInner(peer,endpoint);}catch(error){this.incidents.failed(peer,endpoint,error,this.store.pendingFacts(peer.id).map(message=>message.id));throw error;}finally{this.refreshSubagentHold(this.store.peer(peer.id));}
+    });
   }
   private async signalCodexWakeInner(peer:Peer,endpoint:Endpoint):Promise<void|typeof SKIPPED>{
     this.requireEnabled(peer);
     await this.codexForeground.sweep();
     if(hostingGate(this.store,peer))return SKIPPED;
     const pair=this.store.pairFor(peer.id),current=this.store.peer(peer.id);
-    if(this.stopped||!pair||pair.paused||current.state!=='ready'||!peer.sessionId||endpoint.pendingContext||this.store.bindings.current(peer.id)?.transitioning)return SKIPPED;
+    if(!pair||!peer.sessionId||!this.codexWakeAllowed(peer,endpoint,pair.id)||this.subagentCompletions.blocked(peer))return SKIPPED;
     if(endpoint.daemon&&!await this.daemons.wakeReady(peer,endpoint))return SKIPPED;
+    if(this.subagentCompletions.pending(peer)&&!this.codexDirect.status(peer.id)?.continuation?.uncertain)return this.signalSubagentWake(peer,endpoint,pair);
     if(localCodexEndpoint(this.home,endpoint.address)){
       const actor:Actor={host:'codex',memberId:peer.id,sessionId:peer.sessionId,callId:randomUUID()};
       const notices=this.deliveryHealth.peek(pair.id,peer.id).filter(n=>n.wake===true).map(notice=>({id:notice.id,pairId:pair.id,from:pair.claude,to:peer.id,body:notice.message,callId:notice.id,state:'accepted' as const,createdAt:Date.now(),updatedAt:Date.now(),attempts:0,inReplyTo:null,via:null,evidence:null,error:null,notice:true}));
@@ -1469,15 +1563,13 @@ export class Broker {
         if(message.notice){const notice=(await this.runtimeHealth.prepareNotices(actor,[message.id],true,true))[0];return notice?JSON.stringify({messages:[],notices:[{notice_id:notice.id,source:notice.source??'runtime_monitor',message:notice.message}]}):undefined;}
         const body=this.deliveryBody(message);return body===undefined?undefined:JSON.stringify({messages:[{message_id:message.id,from:modelPeerName(this.store.peer(message.from)),message:body,...(message.replyExpected?{reply_expected:true}:{}),...(message.inReplyTo?{in_reply_to:message.inReplyTo}:{}),...(message.via?{via:message.via}:{}),...fileHintFields(body,peer.cwd)}],status:'received'});
       },guard,receipt=>{this.observeCodexContext(peer,receipt,'原生持久历史');this.deliveryHealth.outcome(pair.id,peer.id,receipt.messageId,'submitted');},id=>this.deliveryHealth.recordedCanWake(pair.id,peer.id,id));
+      if(this.subagentCompletions.pending(peer)&&!this.subagentCompletions.blocked(peer)&&!this.codexDirect.status(peer.id)?.continuation?.uncertain)await this.signalSubagentWake(peer,endpoint,pair);
       return;
     }
     const anchor=this.store.firstPendingId(peer.id)??this.deliveryHealth.peek(pair.id,peer.id).find(n=>n.wake===true)?.id;
     if(!anchor){this.codexWake.clear(peer.id);return;}
     const scope=JSON.stringify([pair.id,peer.sessionId,endpoint.epoch,endpoint.bindingEpoch]);
-    await this.codexWake.signal(peer.id,scope,anchor,()=>this.adapters.codex.wake(peer,endpoint,this.runtimeHealth.abortSignal,async()=>{
-      const fresh=this.store.pairFor(peer.id),active=this.store.endpoint(peer.id);
-      return this.enabled(peer.id)&&!this.stopped&&!this.profiles.blocks(this.store.peer(peer.id))&&fresh?.id===pair.id&&!fresh.paused&&this.store.peer(peer.id).state==='ready'&&active?.epoch===endpoint.epoch&&active.bindingEpoch===endpoint.bindingEpoch&&!this.store.bindings.current(peer.id)?.transitioning&&(this.store.pendingCount(peer.id)>0||this.deliveryHealth.peek(pair.id,peer.id).some(n=>n.wake===true));
-    }));
+    await this.codexWake.signal(peer.id,scope,anchor,async()=>{await this.submitCodexSignal(peer,'native_existing',()=>this.codexWakeAllowed(peer,endpoint,pair.id)&&(this.store.pendingCount(peer.id)>0||this.deliveryHealth.peek(pair.id,peer.id).some(n=>n.wake===true)),authorize=>this.adapters.codex.wake(peer,endpoint,this.runtimeHealth.abortSignal,authorize));});
     const reservation=this.codexWake.status(peer.id);
     if(this.store.pendingCount(peer.id)||this.deliveryHealth.peek(pair.id,peer.id).some(n=>n.wake===true))this.pairAnomalies.integration(current,{pickup:reservation??null});
   }
@@ -1724,7 +1816,11 @@ export class Broker {
   private async dispatchRequest(method:string,raw:unknown):Promise<unknown>{
     const actor=(raw as {actor?:Actor}|undefined)?.actor;
     if(actor&&!['status','member.switch'].includes(method)){
-      const peer=this.store.resolve(actor);if(peer&&!this.enabled(peer.id))return{...this.offResult(peer),...(method==='receive'?{messages:[]}:{})};
+      const peer=this.store.resolve(actor);if(peer&&!this.enabled(peer.id)){
+        const input=raw as Record<string,unknown>;
+        if(method==='hook'&&input.hook_event_name==='UserPromptSubmit'&&isEmbeddedWake(input.prompt))return{continue:false};
+        return{...this.offResult(peer),...(method==='receive'?{messages:[]}:{})};
+      }
     }
     this.questions.sweep();
     this.syncLaunchPreferences();
@@ -2157,7 +2253,7 @@ export class Broker {
       }
       }
     }
-    if(peer&&!this.enabled(peer.id))return{};
+    if(peer&&!this.enabled(peer.id))return event==='UserPromptSubmit'&&isEmbeddedWake(p.prompt)?{continue:false}:{};
     if(peer&&this.store.bindings.current(peer.id)&&!actor.binding){this.store.warnHookContext(typeof p.context_key==='string'?p.context_key:undefined,id,event,'missing_binding',peer.id);return{};}
     if(event==='UserPromptSubmit'&&!p.agent_id&&!p.agent_transcript_path&&typeof p.prompt==='string'&&/^\s*nxbridge\s+pair(?:\s|$)/.test(p.prompt)){
       let reason:string;
@@ -2202,6 +2298,8 @@ export class Broker {
         this.references.capture(peer,p.agent_id,p.last_assistant_message);
         if(typeof p.agent_path==='string')this.references.capture(peer,p.agent_path,p.last_assistant_message);
       }
+      this.subagentCompletions.record(peer,p.agent_id,p.turn_id,p.agent_path,p.transcript_path);
+      queueMicrotask(()=>void this.pump());
       return{};
     }
     if(expand){
@@ -2209,17 +2307,21 @@ export class Broker {
       catch(error){return deny(modelError(error).message);}
     }
     if(p.agent_id||p.agent_transcript_path)return{};
+    const completionContext=event==='UserPromptSubmit'?this.subagentCompletions.context(peer):undefined;
     if(event==='SessionStart'&&p.source!=='compact'||event==='UserPromptSubmit'&&typeof p.prompt==='string'&&p.prompt.trim()&&!isEmbeddedWake(p.prompt))this.daemons.nativeInteraction(peer);
     const wakeContexts:string[]=[];
     if(event==='UserPromptSubmit'&&isEmbeddedWake(p.prompt)){
       this.wakeSignals.consumed(peer.id);
+      this.subagentCompletions.started(peer,true);
       const pair=this.store.pairFor(peer.id);
       const discard=()=>{this.store.event('wake.discarded',{peerId:peer.id,sessionId:id});return{continue:false};};
-      if(!pair||pair.paused||hostingGate(this.store,peer)||['paused','needsHuman','offline'].includes(peer.state))return discard();
+      if(!this.subagentContextAllowed(peer,true))return discard();
+                                                 
+      if(this.subagentCompletions.available(peer))this.store.updatePeer(peer.id,{state:'busy'});
       if(!this.store.pendingCount(peer.id)){
         const notices=await this.runtimeHealth.prepareNotices(actor,undefined,true,true);
-        if(!notices.length)return discard();
-        wakeContexts.push('nxbridge: runtime health facts only; no partner message pickup required',...notices.map(runtimeNoticeText));
+        if(!this.subagentContextAllowed(peer,true)||!notices.length&&!this.subagentCompletions.available(peer))return discard();
+        if(notices.length)wakeContexts.push('nxbridge: runtime health facts only; no partner message pickup required',...notices.map(runtimeNoticeText));
       }
     }
     const timing=z.object({identityMs:z.number().nonnegative(),registrationMs:z.number().nonnegative(),elapsedBeforeBrokerMs:z.number().nonnegative()}).safeParse(p.nxbridge_timing);
@@ -2244,7 +2346,11 @@ export class Broker {
     if(event==='PostToolUse')this.foregroundHealth.observe(peer,'tool_end',nativeTurnId,toolId,!String(p.tool_name).endsWith('receive_messages'),p.tool_response,typeof p.tool_name==='string'?p.tool_name:undefined);
     if(event==='PermissionRequest')this.foregroundHealth.observe(peer,'human',nativeTurnId,toolId);
     if(event==='Interrupt'&&!recoveredInterrupt)this.foregroundHealth.observe(peer,'paused',nativeTurnId);
-    if(event==='Stop')this.foregroundHealth.observe(peer,'ready',nativeTurnId);
+    if(event==='Stop'){
+      this.subagentCompletions.settle(peer,p.transcript_path,nativeTurnId);
+      this.foregroundHealth.observe(peer,'ready',nativeTurnId);
+      queueMicrotask(()=>void this.pump());
+    }
     const permission=p.permission_mode;
     if(typeof p.model==='string'){const profile=runtimeProfile(peer,{model:p.model});this.store.updatePeer(peer.id,{model:profile.model,effort:profile.effort});}
     if(typeof permission==='string'&&codexHookApproval(permission)!=='unknown'){
@@ -2256,6 +2362,11 @@ export class Broker {
       for(const id of receivedIds(p.tool_response))try{const m=this.store.message(id);if(m.to===peer.id&&['unknown','runtimeQueued'].includes(m.state)){this.store.transition(m.id,'contextObserved','宿主 PostToolUse 确认取件输出进入上下文');this.communicationTips.partnerReceived(peer,m);}}catch{}
     }
     const contexts:string[]=[...wakeContexts];
+    if(event==='UserPromptSubmit'){
+      const synthetic=isEmbeddedWake(p.prompt);
+      if(synthetic&&(!this.subagentContextAllowed(peer,true)||this.subagentCompletions.context(peer)!==completionContext))return{continue:false};
+      if(this.subagentContextAllowed(peer,synthetic)){const completion=this.subagentCompletions.consume(peer,completionContext);if(completion)contexts.push(completion);}
+    }
     if(event==='UserPromptSubmit'&&typeof p.prompt==='string'&&/^\s*nxbridge\s+(?:pickup|收信)\s*$/i.test(p.prompt)){
       contexts.push('nxbridge pickup trigger: collect pending partner messages with receive_messages. This trigger grants no approvals and supplies no selection or task answer. If the inbox is empty, report that fact without starting another task.');
       this.store.event('message.pickup.requested',{peerId:peer.id,sessionId:peer.sessionId});

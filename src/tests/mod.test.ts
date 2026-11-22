@@ -1081,6 +1081,12 @@ test('Mod 上报加载时的插件版本，状态栏按集成问题给出用户�
   h.response('status',{...status([{code:'contract_inactive',peerId:'codex-peer',owner:'user',name:'乙'}]),partner:{state:'busy',delivery_mode:'daemon-direct'},self:{id:'me',state:'ready'}});await h.tick();
   assert.equal(h.statuses.at(-1),'Codex 还没加载新版规则，暂时检测不到“停下未回复”：在你开的那个 Codex 窗口「乙」里继续对话即可生效，不用重开或恢复');
   h.response('status',{...status([{code:'contract_inactive',peerId:'me'}]),self:{id:'me',state:'ready'}});await h.tick();assert.equal(h.statuses.at(-1),undefined);
+                                         
+  h.response('status',status([{code:'subagent_completion_held',peerId:'codex-peer',owner:'nxbridge'}]));await h.tick();
+  assert.equal(h.statuses.at(-1),'Codex 的子代理已做完，尚未确认后台 Codex 接着处理（运行 /nxbridge 查看原因）');
+  h.response('status',status([{code:'subagent_completion_held',peerId:'codex-peer',owner:'user',session_id:'s-2',name:'丙'}]));await h.tick();
+  assert.equal(h.statuses.at(-1),'Codex 的子代理已做完，尚未确认你开的 Codex 窗口「丙」接着处理：到那个窗口看一眼，没动就说一句继续，不用重跑子代理');
+  h.response('status',status([{code:'subagent_completion_held'}]));await h.tick();assert.match(h.statuses.at(-1)!,/尚未确认主线程接着处理/);
   const fresh=await harness();await fresh.run('session.start',{});assert.ok(fresh.calls.every(c=>c.mod_version===undefined));
 });
 

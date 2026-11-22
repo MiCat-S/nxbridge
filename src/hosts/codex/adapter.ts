@@ -12,7 +12,7 @@ import { spawnPosixSupervisor, posixSupervisorExit } from '../../process/posix/p
 import { RpcClient, clearRpcFaults, type RpcMessage } from '../../ipc/rpc.js';
 import {BridgeError,DeliveryError,describeError} from '../../shared/errors.js';
 import {DEFAULT_RETENTION} from '../../config/defaults.js';
-import {WAKE_NOTICE,type BridgeConfig,type CodexPermissionEvidence,type Endpoint,type Peer,type PeerState,type RegisterInput} from '../../types.js';
+import {HEALTH_WAKE_NOTICE,WAKE_NOTICE,type BridgeConfig,type CodexPermissionEvidence,type Endpoint,type Peer,type PeerState,type RegisterInput} from '../../types.js';
 import { rotateLog } from '../../storage/logs.js';
 import {sameDirectory} from '../../shared/files.js';
 import {bridgeHome} from '../../shared/local-paths.js';
@@ -44,6 +44,7 @@ import type { PermissionClass } from '../../types.js';
 import { resumeSession, readSessionProfile, sessionFile, verifyResumedSession } from './codex-session-profile.js';
 import { codexParent, codexSubagent, codexUserWindow } from './codex-lineage.js';
 import { codexThreadState } from './codex-thread-state.js';
+import { queueCodexWake } from './queue-wake.js';
 
 export interface CodexThread {
   id:string;cwd:string;name?:string;ephemeral?:boolean;parentThreadId?:string|null;forkedFromId?:string|null;threadSource?:string;path?:string;
@@ -398,6 +399,60 @@ export class CodexAdapter extends EventEmitter {
         try{await this.attachThread(peer,endpoint);}catch(error){this.emit('diagnostic','唤醒已提交，后续线程订阅需要重连；正文仍等待正常取件。');}
       }
     }),signal,()=>submitted);
+  }
+  private async completionNative(endpoint:Endpoint):Promise<void>{
+    const address=endpoint.address,{pid,procStart}=endpoint.native??endpoint;
+    const runtime=runtimeFor(this.home,{endpoint:address})?.value;
+    if(!pid||!procStart||!localCodexEndpoint(this.home,address)||endpoint.runtimeId&&runtime?.id!==endpoint.runtimeId
+      ||runtime&&(runtime.state!=='ready'||runtime.pid!==pid||runtime.procStart!==procStart))throw new DeliveryError('wake_route_unverified','父会话的原生后台代次无法核验。');
+    const native=await processIdentity(pid);
+    if(native.startedAt!==procStart)throw new DeliveryError('wake_route_unverified','父会话的原生后台进程已改变。');
+    await verifyDedicatedCodex(address,native);
+  }
+                                         
+  async wakeSubagents(peer:Peer,endpoint:Endpoint,signal:AbortSignal|undefined,beforeSubmit:()=>Promise<boolean>):Promise<string|undefined>{
+    return this.threadOperation(peer,endpoint,async()=>{
+      if(signal?.aborted||this.disabledMembers.has(peer.id)||peer.host!=='codex'||!peer.sessionId||!['root','fork'].includes(peer.kind)
+        ||endpoint.peerId!==peer.id||!endpoint.active||endpoint.pendingContext||endpoint.mode!=='app-server'||endpoint.daemon)return;
+      try{await this.completionNative(endpoint);}catch(error){if(signal?.aborted)return;throw new DeliveryError((error as BridgeError).code??'wake_route_unverified',describeError(error));}
+      if(signal?.aborted||this.disabledMembers.has(peer.id))return;
+      let rpc:RpcClient;
+      try{rpc=await this.connect(endpoint.address);}catch(error){if(signal?.aborted)return;if(error instanceof BridgeError&&error.code.startsWith('codex_identity_'))throw error;throw new DeliveryError('attach_failed',describeError(error));}
+      const key=endpoint.address+'|'+peer.sessionId,revision=this.nativeStates.get(key)?.revision;
+      const changed=()=>signal?.aborted||this.disabledMembers.has(peer.id)||rpc.closed||this.nativeStates.get(key)?.revision!==revision;
+      if(changed())return;
+      let thread:CodexThread;
+      try{({thread}=await rpc.request('thread/read',{threadId:peer.sessionId,includeTurns:false},{timeout:5000}));}
+      catch(error){if(signal?.aborted)return;if((error as BridgeError).code==='-32600'&&describeError(error)==='thread not loaded: '+peer.sessionId){this.emit('state',peer.sessionId,'offline',endpoint.address);return;}throw error;}
+      if(thread?.id!==peer.sessionId)throw new DeliveryError('session_changed','唤醒读取返回的线程与父会话不符。');
+      if(changed())return;
+      if(thread.ephemeral||codexSubagent(thread))throw new DeliveryError('session_changed','唤醒读取不再是已登记的父线程。');
+      if(!codexThreadIdle(thread)){this.emit('state',peer.sessionId,codexThreadState(thread),endpoint.address);return;}
+      if(!await beforeSubmit()||changed())return;
+      let result:any;
+      try{result=await deliveryStep(()=>rpc.request('turn/start',{threadId:peer.sessionId,input:[{type:'text',text:HEALTH_WAKE_NOTICE}]},{mutation:true}),signal,true);}
+      catch(error){if(error instanceof DeliveryError)throw error;throw Object.assign(new DeliveryError('wake_result_unknown','未取得原生唤醒结果。',true),{cause:error});}
+      if(typeof result?.turn?.id!=='string'||!result.turn.id)throw new DeliveryError('wake_result_unknown','原生唤醒缺少轮次回执，结果未知。',true);
+      return result.turn.id;
+    });
+  }
+  async queueWake(peer:Peer,endpoint:Endpoint,beforeSpawn:()=>void|Promise<void>,onSpawn:()=>void):Promise<void>{
+    return this.threadOperation(peer,endpoint,()=>{
+      this.requireMember(peer.id);
+      return queueCodexWake(this.home,this.config,peer,endpoint,async()=>{
+        await beforeSpawn();this.requireMember(peer.id);
+      },onSpawn);
+    });
+  }
+                                            
+  async queueWakeReady(peer:Peer,endpoint:Endpoint):Promise<boolean>{
+    const rpc=this.clients.get(endpoint.address),key=endpoint.address+'|'+peer.sessionId,revision=this.nativeStates.get(key)?.revision;
+    if(!rpc||rpc.closed||this.disabledMembers.has(peer.id)||!peer.sessionId)return false;
+    try{
+      const {thread}=await rpc.request('thread/read',{threadId:peer.sessionId,includeTurns:false},{timeout:5000});
+      return !rpc.closed&&!this.disabledMembers.has(peer.id)&&this.nativeStates.get(key)?.revision===revision
+        &&thread?.id===peer.sessionId&&!thread.ephemeral&&!codexSubagent(thread)&&codexThreadIdle(thread);
+    }catch{return false;}
   }
   async reconcile(peer:Peer,endpoint:Endpoint,options:{since?:number}={}):Promise<CodexContextReceipt[]>{
     this.requireMember(peer.id);

@@ -49,6 +49,12 @@ const INTEGRATION_TEXT = {
     unknown: 'Codex 还没加载新版规则，暂时检测不到“停下未回复”（重启该 Codex 会话后生效；nxbridge 后台的 Codex 会由 Claude 择机自动重启）',
   },
   launch_failed: '后台搭档启动失败，消息已保留（运行 /nxbridge 查看原因和重试命令）',
+                                                           
+  subagent_completion_held: {
+    nxbridge: 'Codex 的子代理已做完，尚未确认后台 Codex 接着处理（运行 /nxbridge 查看原因）',
+    user: issue => `Codex 的子代理已做完，尚未确认你开的 Codex 窗口${issueName(issue)}接着处理：到那个窗口看一眼，没动就说一句继续，不用重跑子代理`,
+    unknown: 'Codex 的子代理已做完，尚未确认主线程接着处理（运行 /nxbridge 查看原因；你开的窗口没动就到原窗口说一句继续）',
+  },
 };
                                                  
 const issueName = issue => typeof issue?.name === 'string' && issue.name ? `「${issue.name}」` : '';

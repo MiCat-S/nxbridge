@@ -28,7 +28,8 @@ export async function hook(host:Host,input:any,provided:(ack:()=>Promise<void>)=
   const deadline=execution.deadline??(host==='codex'?(['SessionEnd','Interrupt'].includes(input.hook_event_name)?2300:9000)-(performance.timeOrigin-startedAt):undefined);
   const brokerCall=<T=any>(method:string,params:unknown={},options:Parameters<typeof callBroker>[2]={})=>(execution.call??callBroker)<T>(method,params,{...options,deadline});
   const control=input.hook_event_name==='UserPromptSubmit'&&!input.agent_id&&!input.agent_transcript_path&&typeof input.prompt==='string'?/^\s*nxbridge\s+(on|off|status)(?:\s+(self|codex|claude))?\s*$/.exec(input.prompt):null;
-  if(!control&&disabledMember(home,{host,sessionId:input.session_id})){input.nxbridge_disabled=true;return{};}
+  const disabledResult=host==='codex'&&input.hook_event_name==='UserPromptSubmit'&&isEmbeddedWake(input.prompt)?{continue:false}:{};
+  if(!control&&disabledMember(home,{host,sessionId:input.session_id})){input.nxbridge_disabled=true;return disabledResult;}
   if(host==='claude'){
     const identity=execution.claude?.identity??await claudeIdentity(input.session_id),address=execution.claude?execution.claude.address:process.env.CLAUDE_CODE_MESSAGING_SOCKET;
     if(input.hook_event_name==='SessionEnd')return brokerCall('context.end',{actor:{host:'claude',sessionId:identity.record.sessionId,callId:randomUUID()},reason:input.reason==='clear'?'reset':input.reason==='resume'?'switch':'unknown'},{start:false,timeout:2000});
@@ -46,7 +47,7 @@ export async function hook(host:Host,input:any,provided:(ack:()=>Promise<void>)=
   const identityStartedAt=performance.now(),runtime=execution.runtime??await codexProcessIdentity(remainingTime(deadline,10000)),identityMs=execution.identityMs??performance.now()-identityStartedAt,registrationStartedAt=performance.now();
   const disabled=disabledMember(home,{host,sessionId:input.session_id,...runtime,configHome});
   if(disabled){
-    input.nxbridge_disabled=true;if(!control)return{};
+    input.nxbridge_disabled=true;if(!control)return disabledResult;
     const actor={host,memberId:disabled.peerId,sessionId:disabled.sessionId!,callId:randomUUID()};
     if(control[1]==='status')return{decision:'block',reason:formatStatus(await brokerCall('status',{actor},{timeout:8000}))};
     const target=control[2]&&control[2]!=='self'&&control[2]!==host?'partner':'self';
@@ -98,7 +99,7 @@ export async function hook(host:Host,input:any,provided:(ack:()=>Promise<void>)=
     if(!notices.length)throw error;
     process.stderr.write('nxbridge hook：'+describeError(error)+'\n');
   }
-  if(disabledMember(home,{host,sessionId:input.session_id,...runtime,configHome})){input.nxbridge_disabled=true;return{};}
+  if(disabledMember(home,{host,sessionId:input.session_id,...runtime,configHome})){input.nxbridge_disabled=true;return disabledResult;}
   if(result?.continue===false)return result;
   if(monitor&&!notices.length)try{notices=await collectRuntimeNotices(home,'codex',input.session_id,runtime,input.context_key,undefined,undefined,{deadline});}catch(error){process.stderr.write('nxbridge 运行时监测：'+describeError(error)+'\n');}
   if(notices.length){

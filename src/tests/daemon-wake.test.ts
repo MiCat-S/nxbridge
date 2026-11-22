@@ -10,6 +10,7 @@ import { processIdentity } from '../process/process.js';
 import { normalizedHome } from '../integration/hooks/session-bindings.js';
 import { daemonDelivery } from '../broker/delivery/delivery-guidance.js';
 import type { CodexThread } from '../hosts/codex/adapter.js';
+import { HEALTH_WAKE_NOTICE } from '../types.js';
 
 test('共享 daemon 仅向显式授权且已加载空闲的原线程注入续跑，不订阅、不恢复、不排队',async t=>{
   const f=fixture(t),native=await processIdentity(process.pid),domain:DaemonDomain={configHome:temporary(t),pid:process.pid,procStart:native.startedAt,address:'unix://wake-fixture'},calls:{method:string;params:any}[]=[];
@@ -60,4 +61,23 @@ test('共享 daemon 仅向显式授权且已加载空闲的原线程注入续跑
   assert.equal(daemonDelivery(f.store.peer(peer.id),endpoint,0,false,false,false,true).delivery_wait?.state,'needs_human','新对话证据不能遮住原会话仍在等待审批的事实');
   f.store.updatePeer(peer.id,{state:'ready'});thread={...thread,status:{type:'idle'}};duringRead=()=>f.store.unpair(pair.id);
   await assert.rejects(client.inject(peer,endpoint,'late','{}'),{uncertain:false});assert.equal(mutations(),before,'校验期间配对改变不得落入原生写入');
+});
+
+test('完成唤醒复用共享 daemon 的当前空闲授权，队列最后复核不重连',async t=>{
+  const f=fixture(t),native=await processIdentity(process.pid),domain:DaemonDomain={configHome:temporary(t),pid:process.pid,procStart:native.startedAt,address:'unix://completion-daemon'},calls:{method:string;params:any}[]=[];
+  mkdirSync(path.join(domain.configHome,'app-server-daemon'));writeFileSync(path.join(domain.configHome,'app-server-daemon/daemon.pid'),JSON.stringify({pid:process.pid}),'utf8');
+  let thread:CodexThread={id:'parent',cwd:f.c.cwd,source:'cli',status:{type:'idle'}};
+  const client=new CodexDaemons(f.store,f.broker.config,domain.configHome,async input=>f.store.register(input));t.after(()=>client.close());
+  await client.applySnapshot(domain,[thread]);const peer=f.store.find('codex','parent')!,endpoint=f.store.endpoint(peer.id)!,pair=f.store.pair(f.c.id,peer.id);
+  const rpc={closed:false,close(){this.closed=true;},request:async(method:string,params:any)=>{calls.push({method,params});if(method==='thread/read')return{thread};if(method==='turn/start')return{turn:{id:'completion-turn'}};throw Error('不得重连或恢复：'+method);}};
+  const clients=(client as any).clients as Map<string,unknown>;clients.set(normalizedHome(domain.configHome),{...domain,rpc,at:Date.now(),revision:0,threads:[thread]});
+  assert.equal(await client.queueWakeReady(peer,endpoint),false);
+  authorizeDaemonWake(f.store,pair,'selection');assert.equal(await client.queueWakeReady(peer,endpoint),true);
+  assert.equal(await client.wake(peer,endpoint,async()=>true),'completion-turn');
+  assert.deepEqual(calls.filter(call=>call.method==='turn/start').map(call=>call.params),[{threadId:'parent',input:[{type:'text',text:HEALTH_WAKE_NOTICE}]}]);
+  await assert.rejects(client.wake(peer,endpoint,async()=>{f.store.setPaused(true,pair.id);return true;}),{code:'daemon_wake_unavailable',uncertain:false});
+  f.store.setPaused(false,pair.id);thread={...thread,status:{type:'active',activeFlags:['waitingForApproval']}};
+  assert.equal(await client.queueWakeReady(peer,endpoint),false);assert.equal(f.store.peer(peer.id).state,'needsHuman');
+  f.store.updatePeer(peer.id,{state:'ready'});clients.delete(normalizedHome(domain.configHome));const before=calls.length;
+  assert.equal(await client.queueWakeReady(peer,endpoint),false);assert.equal(calls.length,before,'不能启动 daemon version 或恢复连接');
 });

@@ -53,6 +53,8 @@ export function formatStatus(status:any):string{
     ...(status.partner.enabled===false?['搭档的 nxbridge 已关闭；发信已停用，不会自动启动替代窗口。']:[]),
     ...(status.partner.retryBudget?.warning?[status.partner.retryBudget.warning]:[]),
     ...[status.self,status.partner].flatMap(profileNotice),
+                                      
+    ...[status.self,status.partner].flatMap(p=>p?.childCompletions?.hold?.reason?[`Codex 的子代理已做完，尚未确认主线程接着处理：${p.childCompletions.hold.reason}。没动的话到原 Codex 窗口说一句继续，不用重跑子代理`]:[]),
     `待处理消息：${status.pending}；待处理问题：${status.questions?.length??0}`,
     ...(status.identityIssues??[]).map((issue:{message:string})=>'Codex 客户端身份：'+issue.message),
     ...(status.communicationTips?[`发送提示：长报告 ${status.communicationTips.firings.report} 次，引用复用 ${status.communicationTips.firings.reuse} 次；最近 ${status.communicationTips.window.samples} 条字符中位数 ${status.communicationTips.window.median}，P90 ${status.communicationTips.window.p90}；详细统计见 nxbridge status/doctor`]:[]),

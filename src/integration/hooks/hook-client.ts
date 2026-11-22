@@ -4,7 +4,7 @@ import path from 'node:path';
 import { bridgeHome, codexHome, claudeHome, ipcAddress } from '../../shared/local-paths.js';
 import { disabledMember } from '../../broker/member-state.js';
 import {BridgeError} from '../../shared/errors.js';
-import {type Host} from '../../types.js';
+import {isEmbeddedWake,type Host} from '../../types.js';
 
                                               
 async function request(home:string,method:string,params:unknown,timeout:number):Promise<any>{
@@ -27,7 +27,7 @@ async function request(home:string,method:string,params:unknown,timeout:number):
 export async function hookClient(host:Host,input:any,provided:(ack:()=>Promise<void>)=>void,fallback:()=>Promise<unknown>):Promise<unknown>{
   const home=bridgeHome(),control=input.hook_event_name==='UserPromptSubmit'&&!input.agent_id&&!input.agent_transcript_path&&typeof input.prompt==='string'&&/^\s*nxbridge\s+(?:on|off|status)(?:\s+(?:self|codex|claude))?\s*$/.test(input.prompt);
   try{
-    if(!control&&disabledMember(home,{host,sessionId:input.session_id})){input.nxbridge_disabled=true;return{};}
+    if(!control&&disabledMember(home,{host,sessionId:input.session_id})){input.nxbridge_disabled=true;return host==='codex'&&input.hook_event_name==='UserPromptSubmit'&&isEmbeddedWake(input.prompt)?{continue:false}:{};}
     const state=path.join(home,'setup-state.json');
     if(existsSync(state)&&JSON.parse(readFileSync(state,'utf8').replace(/^\uFEFF/,'')).disabled)return fallback();
   }catch{return fallback();}
