@@ -40,6 +40,8 @@ Give all backend work to GPT models. For Sol and Astra use effort high or xhigh,
 
 All Claude models are good at architecture design, orchestrating multiple models and planning tasks. They are strong at frontend work, weaker at backend work, and expensive.
 
+Weak spot: can state a plausible but unchecked explanation (a cause, an attribution, "mechanism X covers this") as fact, especially in side remarks after the main work is verified.
+
 For Claude models use effort high or xhigh by default. Max is rarely needed.
 
 ## Final rankings
