@@ -88,6 +88,12 @@ export class Store {
     return row?JSON.parse(row.data as string):undefined;
   }
   events(after = 0, limit = 100): Row[] { return statement(this.db,'SELECT * FROM events WHERE seq>? ORDER BY seq LIMIT ?').all(after,limit).flatMap(row=>{const data=this.decode('event',String(row.seq),String(row.data));return data===undefined?[]:[{...row,data}];}); }
+                                                
+  codexNativeReceipt(messageId:string,sessionId:string,itemId:string):boolean{
+    const matches=(evidence:unknown)=>typeof evidence==='string'&&evidence.startsWith('Codex ')&&evidence.includes(`，thread=${sessionId}，turn=`)&&evidence.endsWith(`，item=${itemId}`);
+    if(matches(this.message(messageId).evidence))return true;
+    return statement(this.db,"SELECT json_extract(data,'$.evidence') AS evidence FROM events WHERE type='message.state' AND json_extract(data,'$.messageId')=? AND json_extract(data,'$.state')='contextObserved'").all(messageId).some(row=>matches(row.evidence));
+  }
   setting<T>(key: string): T | undefined { const r=statement(this.db,'SELECT value FROM settings WHERE key=?').get(key);if(!r)return;try{return JSON.parse(r.value as string) as T;}catch{throw new BridgeError('record_invalid','状态记录无法解析：'+key);} }
   setSetting(key: string, value: unknown): void { statement(this.db,'INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').run(key,JSON.stringify(value),Date.now()); }
   warnHookContext(contextKey:string|undefined,sessionId:string,event:string,reason:string,peerId?:string):void{

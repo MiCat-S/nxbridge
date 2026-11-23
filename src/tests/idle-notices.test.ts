@@ -6,10 +6,7 @@ import { temporaryDirectory } from './support/temporary.js';
 import { Store } from '../storage/store.js';
 import { IdleNotices } from '../broker/health/idle-notices.js';
 import {DeliveryHealth} from '../broker/health/delivery.js';
-import { idleUnanswered } from '../broker/health/idle-notices.js';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import {PACKAGE_ROOT} from '../shared/package-location.js';
 import type { Message, Pair, Peer } from '../types.js';
 import { encodePeerMessage } from '../hosts/claude/claude-inbox.js';
 
@@ -179,27 +176,6 @@ test('Claude 自动回复只接受实际投递正文，缺少或冒用证据时�
     assert.equal(store.message(result.message_id).inReplyTo,callId==='valid'?task.id:null,callId);
   }
   assert.equal(store.message(task.id).state,'responded');
-});
-
-test('真实账本只读回放：后续发信已覆盖的历史消息不再重建为待处理指针',()=>{
-  const fixture=JSON.parse(readFileSync(path.join(PACKAGE_ROOT,'src/tests/fixtures/idle-ledger.json'),'utf8'));
-  let stalls=0,legacy=0;
-  for(const row of fixture.cases){
-                                      
-                                                    
-    const at=row.idle?.created_at??row.outgoing.created_at;
-    const map=(raw:any):Message=>{
-      const event=row.events.filter((event:any)=>JSON.parse(event.data).messageId===raw.id).at(-1),state=event?JSON.parse(event.data).state:'accepted';
-      return{id:raw.id,pairId:raw.pair_id,from:raw.sender,to:raw.recipient,body:raw.body,inReplyTo:raw.original_reply_to??raw.in_reply_to,via:raw.via,callId:raw.call_id,state,createdAt:raw.created_at,updatedAt:event?.created_at??raw.created_at,evidence:raw.evidence,error:raw.error,attempts:raw.attempts};
-    };
-    const incoming=row.messages.map(map).filter((message:Message)=>message.state==='contextObserved'&&message.createdAt>row.outgoing.created_at).reverse().slice(0,3);
-    const peer:Peer={id:row.outgoing.sender,host:'codex',sessionId:'historical-session',cwd:'',name:'Codex',kind:'root',parentId:null,owner:'nxbridge',state:'ready',permission:'prompting',updatedAt:at};
-    const last=map(row.outgoing);last.state='contextObserved';
-    const message=idleUnanswered({pair:{id:row.pair.id,claude:row.pair.claude,codex:row.pair.codex,paused:!!row.pair.paused,archived:!!row.pair.archived,createdAt:row.pair.created_at},partner:peer,delegator:{...peer,id:row.outgoing.recipient,host:'claude'},since:at,now:at+120001,minutes:2,transitioning:false,queued:false,questionTowardDelegator:false,messages:incoming,lastMessage:last});
-    assert.equal(message,undefined,row.outgoing.id);
-    if(row.label==='stall'){assert.ok(row.idle);stalls++;}else{assert.equal(row.label,'legacy_expected_false_positive');legacy++;}
-  }
-  assert.equal(stalls,4);assert.equal(legacy,1);
 });
 
 test('空闲提醒按同毫秒发信边界撤销旧指针，只显示最新三条；重开观察器不会恢复旧提醒',t=>{

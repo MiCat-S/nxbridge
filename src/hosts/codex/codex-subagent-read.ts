@@ -60,6 +60,9 @@ function v2Result(item:any):string|undefined{
   if(content?.type==='input_text'&&typeof content.text==='string'&&content.text.startsWith(`Message Type: FINAL_ANSWER\nTask name: ${item.recipient}\nSender: ${item.author}\nPayload:\n`))return item.author;
 }
 
+export const codexQueuedAgentMetadata=(row:any):boolean=>row.type==='inter_agent_communication_metadata'&&row.payload?.trigger_turn===false;
+export const codexChildResult=(item:any,queued:boolean):string|undefined=>v1Result(item)??(queued?v2Result(item):undefined);
+
                                            
 export function readCodexSubagentCompletions(file:unknown,sessionId:string,parentTurnId:string,pending:readonly CodexSubagentReadCandidate[]):ReadonlySet<string>{
   if(!parentTurnId||!pending.length)return new Set();
@@ -75,7 +78,7 @@ export function readCodexSubagentCompletions(file:unknown,sessionId:string,paren
     for(let next;(next=buffer.indexOf(10,offset))>=0;offset=next+1){
       const row=JSON.parse(buffer.subarray(offset,next).toString('utf8'));
       const payload=row.payload,queued=queuedAgentMetadata;
-      queuedAgentMetadata=row.type==='inter_agent_communication_metadata'&&payload?.trigger_turn===false;
+      queuedAgentMetadata=codexQueuedAgentMetadata(row);
       if(row.type==='event_msg'){
         if(['task_started','turn_started'].includes(payload?.type)){
           turn=payload.turn_id;
@@ -85,7 +88,7 @@ export function readCodexSubagentCompletions(file:unknown,sessionId:string,paren
       }
       if(row.type==='compacted'){matches.clear();ambiguous.clear();continue;}
       if(row.type!=='response_item'||!payload)continue;
-      const reference=v1Result(payload)??(queued?v2Result(payload):undefined);
+      const reference=codexChildResult(payload,queued);
       if(reference){
         const compatible=candidates.filter(candidate=>start+offset>=candidate.floor.offset&&(candidate.agentId===reference||candidate.agentPath===reference));
         for(const candidate of compatible){

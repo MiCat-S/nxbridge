@@ -68,7 +68,7 @@ export function pruneHistory(db:DatabaseSync,policy:RetentionConfig,now:number,p
     statement(db,'DELETE FROM settings WHERE key=?').run('cooperation:'+peer.id);
     statement(db,'DELETE FROM settings WHERE key IN (?,?,?)').run('cooperationUnpaired:'+peer.id,'codexTranscript:'+peer.id,'codexRecoveryFence:'+peer.id);
     statement(db,'DELETE FROM settings WHERE key IN (?,?)').run('checkpoint:'+peer.id,'recoveryRevision:'+peer.id);
-    statement(db,'DELETE FROM settings WHERE key=?').run('codexWake:'+peer.id);
+    statement(db,'DELETE FROM settings WHERE key IN (?,?)').run('codexWake:'+peer.id,'codexFinalForward:'+peer.id);
   }
   for(const ep of endpoints){
     if(dead.has(ep.peerId)||ep.seenAt>=idleCutoff)continue;
@@ -84,6 +84,7 @@ export function pruneHistory(db:DatabaseSync,policy:RetentionConfig,now:number,p
   db.exec(                          embeddedSource("sql", `UPDATE events SET data=json_remove(data,'$.health.fingerprint') WHERE seq IN
     (SELECT seq FROM events WHERE type='health.alert' AND json_type(data,'$.health.fingerprint') IS NOT NULL ORDER BY seq LIMIT 8)`));
   db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'turnHealthDelivery:%' AND updated_at<? AND NOT EXISTS (SELECT 1 FROM pairs WHERE archived=0 AND settings.key LIKE 'turnHealthDelivery:'||pairs.id||':%')`)).run(cutoff);
+  db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'codexFinalForwardStreak:%' AND NOT EXISTS (SELECT 1 FROM pairs WHERE settings.key='codexFinalForwardStreak:'||pairs.id)`)).run();
   db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'communicationTip:message:%' AND NOT EXISTS (SELECT 1 FROM messages WHERE settings.key='communicationTip:message:'||messages.id)`)).run();
   db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'syncTip:message:%' AND NOT EXISTS (SELECT 1 FROM messages WHERE settings.key='syncTip:message:'||messages.id)`)).run();
   db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'claudeApproval:%' AND (value='null' OR NOT EXISTS (SELECT 1 FROM messages WHERE settings.key='claudeApproval:'||messages.id))`)).run();

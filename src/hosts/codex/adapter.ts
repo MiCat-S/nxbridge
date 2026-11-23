@@ -45,6 +45,7 @@ import { resumeSession, readSessionProfile, sessionFile, verifyResumedSession } 
 import { codexParent, codexSubagent, codexUserWindow } from './codex-lineage.js';
 import { codexThreadState } from './codex-thread-state.js';
 import { queueCodexWake } from './queue-wake.js';
+import type { CodexTurnOriginProvider } from './codex-turn-origin.js';
 
 export interface CodexThread {
   id:string;cwd:string;name?:string;ephemeral?:boolean;parentThreadId?:string|null;forkedFromId?:string|null;threadSource?:string;path?:string;
@@ -173,6 +174,7 @@ export function threadRegistration(thread:CodexThread,endpoint:string,profile:Co
 
 export class CodexAdapter extends EventEmitter {
   modelProfile:(peer:Peer)=>import('../../types.js').ModelProfile=()=>({});
+  turnOrigin?:CodexTurnOriginProvider;
   private disabledMembers=new Set<string>();
   private disabledThreads=new Set<string>();
   setEnabled(peer:Peer,endpoint:Endpoint|undefined,enabled:boolean,disconnect=false):void{
@@ -392,9 +394,10 @@ export class CodexAdapter extends EventEmitter {
       if(signal?.aborted)return;
       let rpc:RpcClient;
       try{rpc=await this.attachThread(peer,endpoint);}catch(error){if(error instanceof BridgeError&&error.code.startsWith('codex_identity_'))throw error;throw new DeliveryError('attach_failed',describeError(error));}
+      const origin=await this.turnOrigin?.(peer,message===HEALTH_WAKE_NOTICE?'notice':'partner');
       if(signal?.aborted||beforeSubmit&&!await beforeSubmit()||signal?.aborted)return;
       this.requireMember(peer.id);submitted=true;
-      await rpc.request('turn/start',{threadId:peer.sessionId,input:[{type:'text',text:message}]},{mutation:true});
+      await rpc.request('turn/start',{threadId:peer.sessionId,input:[{type:'text',text:message}],...origin},{mutation:true});
       if(!this.attached.has(endpoint.address+'|'+peer.sessionId)){
         try{await this.attachThread(peer,endpoint);}catch(error){this.emit('diagnostic','唤醒已提交，后续线程订阅需要重连；正文仍等待正常取件。');}
       }
@@ -428,20 +431,25 @@ export class CodexAdapter extends EventEmitter {
       if(changed())return;
       if(thread.ephemeral||codexSubagent(thread))throw new DeliveryError('session_changed','唤醒读取不再是已登记的父线程。');
       if(!codexThreadIdle(thread)){this.emit('state',peer.sessionId,codexThreadState(thread),endpoint.address);return;}
+      const origin=await this.turnOrigin?.(peer,'children');
       if(!await beforeSubmit()||changed())return;
       let result:any;
-      try{result=await deliveryStep(()=>rpc.request('turn/start',{threadId:peer.sessionId,input:[{type:'text',text:HEALTH_WAKE_NOTICE}]},{mutation:true}),signal,true);}
+      try{result=await deliveryStep(()=>rpc.request('turn/start',{threadId:peer.sessionId,input:[{type:'text',text:HEALTH_WAKE_NOTICE}],...origin},{mutation:true}),signal,true);}
       catch(error){if(error instanceof DeliveryError)throw error;throw Object.assign(new DeliveryError('wake_result_unknown','未取得原生唤醒结果。',true),{cause:error});}
       if(typeof result?.turn?.id!=='string'||!result.turn.id)throw new DeliveryError('wake_result_unknown','原生唤醒缺少轮次回执，结果未知。',true);
       return result.turn.id;
     });
   }
-  async queueWake(peer:Peer,endpoint:Endpoint,beforeSpawn:()=>void|Promise<void>,onSpawn:()=>void):Promise<void>{
-    return this.threadOperation(peer,endpoint,()=>{
+  async queueWake(peer:Peer,endpoint:Endpoint,beforeSpawn:()=>void|Promise<void>,onSpawn:()=>void,message=HEALTH_WAKE_NOTICE):Promise<void>{
+    return this.threadOperation(peer,endpoint,async()=>{
       this.requireMember(peer.id);
-      return queueCodexWake(this.home,this.config,peer,endpoint,async()=>{
-        await beforeSpawn();this.requireMember(peer.id);
-      },onSpawn);
+      const origin=await this.turnOrigin?.(peer,'queue');
+      await queueCodexWake(this.home,this.config,peer,endpoint,{clientUserMessageId:origin?.clientUserMessageId??randomUUID(),message,
+        beforeSubmit:async()=>{await beforeSpawn();this.requireMember(peer.id);},
+        ...(endpoint.mode==='app-server'||endpoint.daemon?{requestRemote:async(params:any,authorize:()=>Promise<void>)=>{
+          const rpc=await this.connect(endpoint.address);await authorize();onSpawn();
+          return rpc.request('thread/queue/add',params,{mutation:true});
+        }}:{})});
     });
   }
                                             
@@ -485,7 +493,8 @@ export class CodexAdapter extends EventEmitter {
   private async continueThread(peer:Peer,endpoint:Endpoint):Promise<string>{
     this.requireMember(peer.id);
     const rpc=await this.attachThread(peer,endpoint);this.requireMember(peer.id);
-    const result=await rpc.request('turn/start',{threadId:peer.sessionId,input:[]},{mutation:true});
+    const origin=await this.turnOrigin?.(peer,'partner');this.requireMember(peer.id);
+    const result=await rpc.request('turn/start',{threadId:peer.sessionId,input:[],...origin},{mutation:true});
                                              
     if(!this.attached.has(endpoint.address+'|'+peer.sessionId))try{await this.attachThread(peer,endpoint);}catch(error){this.emit('diagnostic','续跑已提交，线程通知订阅需要重连：'+describeError(error));}
     return result.turn.id;

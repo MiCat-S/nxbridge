@@ -32,6 +32,18 @@ export function providerStatusText(health:any):string|undefined{
   return r.state==='failed'?`这一轮已停止：${providerCause(r)}，最近一次 ${at}；${next}`:`在等模型服务：${providerCause(r)}，正在自动重试，最近一次 ${at}；${next}`;
 }
 const profileText=(p:{model?:string;effort?:string|number}|undefined)=>[p?.model!==undefined?'模型 '+p.model:'',p?.effort!==undefined?'推理强度 '+p.effort:''].filter(Boolean).join('，');
+                                                        
+                                            
+function finalForwardNotice(member:any):string[]{
+  const forward=member?.final_forward,hold=forward?.hold;
+  if(!forward||!hold)return[];
+  const next='两边都停着的话，到 Claude 窗口说一句继续';
+  if(hold==='cap_reached')return[`Codex 结束一轮没告诉 Claude，已连续自动转给 Claude ${forward.consecutive??forward.cap}/${forward.cap} 次，这次不再自动转：${next}（Codex 正常发出消息或你说话后重新计数）`];
+                                                                                            
+  if(hold==='origin_unverified')return[`Codex 结束一轮没告诉 Claude，但确认不了这一轮是不是你自己开始的，没有自动转给 Claude：${next}`];
+  if(hold==='history_unavailable'&&forward.pending===true)return[`Codex 结束一轮没告诉 Claude，但读不到它的历史记录来核对，没有自动转给 Claude：${next}`];
+  return[];
+}
                                
 function profileNotice(member:any):string[]{
   const view=member?.partner_profile,wanted=profileText(view?.requested),who='后台 '+(member?.host==='codex'?'Codex':'Claude');
@@ -55,6 +67,8 @@ export function formatStatus(status:any):string{
     ...[status.self,status.partner].flatMap(profileNotice),
                                       
     ...[status.self,status.partner].flatMap(p=>p?.childCompletions?.hold?.reason?[`Codex 的子代理已做完，尚未确认主线程接着处理：${p.childCompletions.hold.reason}。没动的话到原 Codex 窗口说一句继续，不用重跑子代理`]:[]),
+                                                                
+    ...[status.self,status.partner].flatMap(finalForwardNotice),
     `待处理消息：${status.pending}；待处理问题：${status.questions?.length??0}`,
     ...(status.identityIssues??[]).map((issue:{message:string})=>'Codex 客户端身份：'+issue.message),
     ...(status.communicationTips?[`发送提示：长报告 ${status.communicationTips.firings.report} 次，引用复用 ${status.communicationTips.firings.reuse} 次；最近 ${status.communicationTips.window.samples} 条字符中位数 ${status.communicationTips.window.median}，P90 ${status.communicationTips.window.p90}；详细统计见 nxbridge status/doctor`]:[]),

@@ -287,6 +287,30 @@ test('同一空闲提醒在消费前因临时门槛撤销，恢复后沿用原�
   assert.equal(h.calls.filter(c=>c.operation==='monitor-enqueue').length,2);assert.equal(h.prompts.length,1);assert.match(h.prompts[0].context.join('\n'),/仍有未关联回复的任务/);
 });
 
+test('只限空闲送达的提醒：空闲边界才声明 ready_boundary；回合中到达或忙时入队被推迟都不报失败，之后沿用原编号重送',async()=>{
+  const notice={id:'codex-final',wake:true,readyOnly:true,source:'codex_final'};
+                                                
+  const idle=await harness({deferPrompts:true});await idle.run('session.start',{});
+  idle.response('monitor',{notices:[notice]});idle.response('monitor-prepare',{notices:[{...notice,message:'Codex 结束一轮的转发'}]});
+  await idle.tick();await idle.consumePrompt();
+  assert.equal(idle.calls.find(c=>c.operation==='monitor-prepare')?.ready_boundary,true);
+  assert.equal(idle.prompts.length,1);assert.match(idle.prompts[0].context.join('\n'),/Codex 结束一轮的转发/);
+                                                
+  const busy=await harness({deferPrompts:true,noticeTurnId:'turn-1'});await busy.run('session.start',{});
+  busy.response('monitor',{notices:[notice]});busy.response('monitor-prepare',{notices:[],deferred:true});
+  await busy.tick();assert.equal((await busy.consumePrompt()).drop,'nxbridge：Claude 正忙，这条提醒等空闲时再送，无需处理');
+  assert.equal(busy.calls.find(c=>c.operation==='monitor-prepare')?.ready_boundary,undefined);
+  assert.equal(busy.calls.filter(c=>c.operation==='monitor-ack').length,0);assert.equal(busy.prompts.length,0);
+  await busy.tick();assert.equal(busy.calls.filter(c=>c.operation==='monitor-enqueue').length,2);
+  assert.ok(!busy.statuses.some((s:any)=>/运行时通知/.test(String(s))),'推迟不是失败，不进状态栏');
+                                        
+  const refused=await harness({deferPrompts:true});await refused.run('session.start',{});
+  refused.response('monitor',{notices:[notice]});refused.response('monitor-enqueue',{deferred:true});
+  await refused.tick();await refused.tick();
+  assert.equal(refused.calls.filter(c=>c.operation==='monitor-enqueue').length,2);assert.equal(refused.calls.some(c=>c.operation==='monitor-prepare'),false);
+  assert.ok(!refused.statuses.some((s:any)=>/运行时通知/.test(String(s))),'推迟不是失败，不进状态栏');
+});
+
 test('Mod 原生提示先入队后消费，保留最终核验并丢弃恢复或跨对话的旧信号',async()=>{
   for(const state of ['active','resolved','rotated']){
     const h=await harness({deferPrompts:true});await h.run('session.start',{});

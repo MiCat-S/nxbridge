@@ -157,6 +157,18 @@ test('通知在连接前或实际写入前已撤销时不唤醒宿主，不登�
   assert.equal(f.payloads.length,0);assert.equal(f.store.messages().length,0);assert.equal(f.store.setting('healthNoticeAdmission:'+f.c.id),undefined);
 });
 
+test('空闲限定提醒在原生写入前遇到忙碌会暂缓，恢复空闲后沿用原编号且不提前准入',async t=>{
+  const {store,c,pair,payloads,id,identity,lease,address,revision,home}=await inboxFixture(t),health=new DeliveryHealth(store);
+  health.enqueue(pair.id,c.id,{id,message:'只在空闲边界领取的最终回复',state:'pending',source:'codex_final',tier:4,readyOnly:true});
+  store.updatePeer(c.id,{state:'busy'});
+  assert.deepEqual(await queueRuntimeNotice(home,c.sessionId!,identity,lease,address,id,revision),{deferred:true});
+  assert.equal(payloads.length,0);assert.equal(health.get(pair.id,c.id,id)?.state,'pending');assert.equal(store.setting('healthNoticeAdmission:'+c.id),undefined);
+  store.updatePeer(c.id,{state:'ready'});
+  assert.deepEqual(await queueRuntimeNotice(home,c.sessionId!,identity,lease,address,id,revision),{queued:true});
+  assert.equal(payloads.length,1);assert.ok(payloads[0].message.content.includes(id));assert.ok(!payloads[0].message.content.includes('只在空闲边界领取的最终回复'));
+  assert.equal(store.setting('healthNoticeAdmission:'+c.id),undefined,'标记入队不能消耗正文准入和转达次数');
+});
+
 test('原生队列拒绝信息类通知，正文保留给正常取件',async t=>{
   const f=await inboxFixture(t),health=new DeliveryHealth(f.store);health.enqueue(f.pair.id,f.c.id,{id:f.id,message:'仅供告知的事实',state:'pending',kind:'runtime'});
   assert.deepEqual(await queueRuntimeNotice(f.home,f.c.sessionId!,f.identity,f.lease,f.address,f.id,f.revision,'prompting'),{drop:'condition resolved before delivery'});

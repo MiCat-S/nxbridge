@@ -106,31 +106,36 @@ export class DeliveryHealth {
   private pending(value:DeliveryIncident|undefined,senderId:string,onlyRuntime:boolean):RuntimeNotice[]{
     return value?.notices.filter(n=>!n.admitted&&(!onlyRuntime||!n.source)&&(n.state==='pending'||n.state==='sending'&&Date.now()-(n.claimedAt??0)>=60000)&&this.policy.eligible(senderId,n))??[];
   }
+  private groups(notices:RuntimeNotice[],recipient:string):RuntimeNotice[]{
+                                         
+    return[notices.filter(n=>!n.readyOnly),notices.filter(n=>n.readyOnly)].filter(group=>group.length).map(group=>this.combined(group,recipient));
+  }
                                           
   peek(pairId:string,senderId:string,onlyRuntime=false):RuntimeNotice[]{
     const pending=this.pending(this.storage.setting<DeliveryIncident>(deliveryHealthKey(pairId,senderId)),senderId,onlyRuntime);
-    return pending.length?[this.combined(pending,senderId)]:[];
+    return this.groups(pending,senderId);
   }
   take(pairId:string,senderId:string,onlyRuntime=false):RuntimeNotice[]{
     return this.storage.transaction(()=>{
       const key=deliveryHealthKey(pairId,senderId),value=this.storage.setting<DeliveryIncident>(key);if(!value)return[];
       const pending=this.pending(value,senderId,onlyRuntime);
       for(const notice of value.notices)if(pending.some(n=>n.id===notice.id)){notice.state='sending';notice.claimedAt=Date.now();}
-      if(pending.length)this.storage.setSetting(key,value);return pending.length?[this.combined(pending,senderId)]:[];
+      if(pending.length)this.storage.setSetting(key,value);return this.groups(pending,senderId);
     });
   }
   get(pairId:string,senderId:string,id:string):RuntimeNotice|undefined{const notice=this.storage.setting<DeliveryIncident>(deliveryHealthKey(pairId,senderId))?.notices.find(n=>n.id===id&&(n.state==='pending'||n.state==='sending')&&!n.admitted);return notice?{...notice,tier:noticeTier(notice),wake:this.policy.canWake(senderId,notice)}:undefined;}
   recordedCanWake(pairId:string,recipient:string,id:string):boolean{return this.storage.setting<DeliveryIncident>(deliveryHealthKey(pairId,recipient))?.notices.some(n=>(n.id===id||n.batchId===id)&&(n.admitted?noticeCanWake(n,recipient):this.policy.canWake(recipient,n)))===true;}
-  private combined(notices:RuntimeNotice[],recipient:string):RuntimeNotice{return{...notices[0]!,tier:Math.max(...notices.map(noticeTier)) as 3|4,wake:notices.some(n=>this.policy.canWake(recipient,n)),message:notices.map(n=>n.message).join('\n'),componentIds:notices.map(n=>n.id)};}
+  eligible(pairId:string,recipient:string,id:string):boolean{const notice=this.get(pairId,recipient,id);return !!notice&&this.policy.eligible(recipient,notice);}
+  private combined(notices:RuntimeNotice[],recipient:string):RuntimeNotice{return{...notices[0]!,tier:Math.max(...notices.map(noticeTier)) as 3|4,wake:notices.some(n=>this.policy.canWake(recipient,n)),...(notices.some(n=>n.readyOnly)?{readyOnly:true}:{}),message:notices.map(n=>n.message).join('\n'),componentIds:notices.map(n=>n.id)};}
   due(pairId:string,senderId:string):boolean{return this.pending(this.storage.setting<DeliveryIncident>(deliveryHealthKey(pairId,senderId)),senderId,false).length>0;}
-  prepare(pairId:string,senderId:string,id:string,scope?:string,onlyRuntime=false,requireWake=false):RuntimeNotice|undefined{
+  prepare(pairId:string,senderId:string,id:string,scope?:string,onlyRuntime=false,requireWake=false,readyBoundary=false):RuntimeNotice|undefined{
     return this.storage.transaction(()=>{
       const key=deliveryHealthKey(pairId,senderId),value=this.storage.setting<DeliveryIncident>(key),notice=value?.notices.find(n=>n.id===id&&!n.admitted&&(n.state==='pending'||n.state==='sending'));
-      if(!value||!notice)return;
+      if(!value||!notice||notice.readyOnly&&!readyBoundary)return;
       const valid=(n:RuntimeNotice)=>!(n.scope&&scope!==n.scope||n.source!=='managed_recovery'&&n.incidentId&&(n.incidentId!==value.id||n.phase==='alert'&&!value.active||n.phase==='recovery'&&value.active));
       for(const n of value.notices)if(!n.admitted&&(n.state==='pending'||n.state==='sending')&&!valid(n))n.state='denied';
       if(!valid(notice)||!this.policy.eligible(senderId,notice)||onlyRuntime&&notice.source){this.storage.setSetting(key,value);return;}
-      const pending=value.notices.filter(n=>!n.admitted&&(n.state==='pending'||n.state==='sending')&&(!onlyRuntime||!n.source)&&valid(n)&&this.policy.eligible(senderId,n));
+      const pending=value.notices.filter(n=>!n.admitted&&(n.state==='pending'||n.state==='sending')&&(!onlyRuntime||!n.source)&&(!n.readyOnly||readyBoundary)&&valid(n)&&this.policy.eligible(senderId,n));
       if(requireWake&&!pending.some(n=>this.policy.canWake(senderId,n))){this.storage.setSetting(key,value);return;}
       const combined=this.combined([notice,...pending.filter(n=>n.id!==id)],senderId);
                                                

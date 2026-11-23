@@ -23,6 +23,8 @@ const pickup=noticePickup;
 const STALE_DROP='nxbridge：这条提醒送达前问题已消失，已自动丢弃，无需处理';
                                                           
 const DELIVERED_DROP='nxbridge：这条提醒已随前面的对话附上，无需处理';
+                                                                 
+const DEFERRED_DROP='nxbridge：Claude 正忙，这条提醒等空闲时再送，无需处理';
                                                
 const delivered=new Set();
 function remember(notice){
@@ -34,9 +36,11 @@ const OUTAGE_PREFIX='broker-outage:';
 async function releaseOutage($,id,context){try{await ack($,{id},context,'denied','outage_definitive_not_delivered');}catch{}}
 const text=notice=>`[nxbridge system_notice source=${notice.source??'runtime_monitor'} notice_id=${notice.id}]\n${notice.message}`;
 async function ack($,notice,context,state,error){try{await call($,'monitor-ack',{notice_id:notice.id,state,context,...(error?{error}:{})});}catch{}}
-async function prepare($,id,context){
+                                                                                    
+async function prepare($,id,context,readyBoundary=false,result={}){
   if(await captureContext($)!==context)return;
-  const response=await call($,'monitor-prepare',{notice_id:id,context});
+  const response=await call($,'monitor-prepare',{notice_id:id,context,...(readyBoundary?{ready_boundary:true}:{})});
+  if(response?.deferred===true)result.deferred=true;
   return await captureContext($)===context?response.notices?.find(n=>n.id===id):undefined;
 }
                                                                     
@@ -98,7 +102,9 @@ export async function noticePrompt($,e,next){
   queued.delete(id);
   let notice;
   try{
-    notice=await prepare($,id,context);
+    const prepared={};
+    notice=await prepare($,id,context,e.isMeta===true&&!e.turnId,prepared);
+    if(!notice&&prepared.deferred){report('cancelled');return{drop:DEFERRED_DROP};}
     if(!notice){
       if(id.startsWith(OUTAGE_PREFIX))await releaseOutage($,id,context);
       if(delivered.has(id)){report('submitted');return{drop:DELIVERED_DROP};}
@@ -135,7 +141,8 @@ export async function deliverNotice($,notice,context,report){
     queued.set(notice.id,{context,report});
                                                                 
     let result;try{result=await call($,'monitor-enqueue',{notice_id:notice.id,context});}catch(error){if(retryable(error))queued.delete(notice.id);throw error;}
-    if(result?.drop)queued.delete(notice.id);
+                                                             
+    if(result?.drop||result?.deferred===true)queued.delete(notice.id);
     return result;
   }
                                 

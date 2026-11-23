@@ -73,7 +73,11 @@ async function modNow(input:any,execution?:ModExecution):Promise<unknown>{
   const passive=['register','prompt','state','observe','tip-agent','tip-sync','ref-capture','context-end'].includes(input.operation);
   const request=<T=any>(method:string,params:any,options:Parameters<typeof brokerCall>[2]={})=>rawRequest<T>(method,params,{...options,...(passive?{start:false,timeout:2000}:{})});
                                   
-  if(input.operation==='monitor'||input.operation==='monitor-prepare')return{notices:await collectRuntimeNotices(bridgeHome(),'claude',identity.record.sessionId,native,undefined,typeof input.mod_version==='string'?input.mod_version:undefined,registration.endpoint.modRevision,{admit:modMonitorAdmission(input),...(binding?{binding}:{}),...(input.operation==='monitor-prepare'?{noticeId:z.string().parse(input.notice_id)}:{})})};
+  if(input.operation==='monitor'||input.operation==='monitor-prepare'){
+    let deferred=false;
+    const notices=await collectRuntimeNotices(bridgeHome(),'claude',identity.record.sessionId,native,undefined,typeof input.mod_version==='string'?input.mod_version:undefined,registration.endpoint.modRevision,{admit:modMonitorAdmission(input),...(binding?{binding}:{}),...(input.operation==='monitor-prepare'?{noticeId:z.string().parse(input.notice_id),readyBoundary:input.ready_boundary===true,onDeferred:()=>{deferred=true;}}:{})});
+    return{notices,...(deferred?{deferred:true}:{})};
+  }
   if(input.operation==='monitor-ack'){
     await acknowledgeRuntimeNotice(bridgeHome(),'claude',identity.record.sessionId,native,z.string().parse(input.notice_id),z.enum(['submitted','denied','unknown']).parse(input.state),typeof input.error==='string'?input.error:undefined);return{recorded:true};
   }

@@ -21,7 +21,7 @@ function sameNative(value:HealthSnapshot,native:Native):boolean{
   return recorded?.pid===native.pid&&recorded.procStart===native.procStart;
 }
                                                         
-export async function collectRuntimeNotices(home:string,host:Host,sessionId:string,native:Native,contextKey?:string,modVersion?:string,modRevision?:string,options:{admit?:boolean;noticeId?:string;binding?:{key:string;epoch:string};deadline?:number}={}):Promise<RuntimeNotice[]>{
+export async function collectRuntimeNotices(home:string,host:Host,sessionId:string,native:Native,contextKey?:string,modVersion?:string,modRevision?:string,options:{admit?:boolean;noticeId?:string;binding?:{key:string;epoch:string};deadline?:number;readyBoundary?:boolean;onDeferred?:()=>void}={}):Promise<RuntimeNotice[]>{
   const timeout=(limit:number)=>remainingTime(options.deadline,limit);
   if(!installationEnabled(home))return[];
   const value=readHealthSnapshot(home,host,sessionId,contextKey,native,timeout(300));
@@ -45,8 +45,9 @@ export async function collectRuntimeNotices(home:string,host:Host,sessionId:stri
     const rpc=await connectBroker(home,timeout(500));
     try{
       const requestTimeout=timeout(3500);requested=true;
-      const result=(await rpc.request<{notices:RuntimeNotice[]}>('health.monitor',{actor:{host,memberId:value.sender.id,sessionId,callId:randomUUID(),...(value.binding?{binding:value.binding}:{})},...(contextKey?{context_key:contextKey}:{}),...(modVersion?{mod_version:modVersion}:{}),...(modRevision?{mod_revision:modRevision}:{}),admit:options.admit!==false,...(options.noticeId?{notice_id:options.noticeId}:{})},{timeout:requestTimeout,mutation:options.admit!==false})).notices;
-      return result;
+      const result=await rpc.request<{notices:RuntimeNotice[];deferred?:boolean}>('health.monitor',{actor:{host,memberId:value.sender.id,sessionId,callId:randomUUID(),...(value.binding?{binding:value.binding}:{})},...(contextKey?{context_key:contextKey}:{}),...(modVersion?{mod_version:modVersion}:{}),...(modRevision?{mod_revision:modRevision}:{}),admit:options.admit!==false,...(options.noticeId?{notice_id:options.noticeId}:{}),...(host==='claude'&&options.readyBoundary?{ready_boundary:true}:{})},{timeout:requestTimeout,mutation:options.admit!==false});
+      if(result.deferred)options.onDeferred?.();
+      return result.notices;
     }
     finally{rpc.close();}
   }catch(error){

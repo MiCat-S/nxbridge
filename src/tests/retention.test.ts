@@ -86,15 +86,19 @@ test('nxref 和取件缓存共享数量/字节/年龄额度；终态快照过期
 
 test('归档空配对和长期离线死会话被回收，当前配对与活进程保留',t=>{
   const temp=temporaryDirectory(),home=temp.directory,filename=path.join(home,'history.db'),store=new Store(filename);t.after(async()=>{store.close();await temp.cleanup();});
-  const c=store.register(registration('claude','c')),x=store.register(registration('codex','x'));store.pair(c.id,x.id);store.unpair();
+  const c=store.register(registration('claude','c')),x=store.register(registration('codex','x')),archived=store.pair(c.id,x.id);store.unpair();
   store.deactivate(c.id);store.updatePeer(c.id,{state:'offline'});
   const live=store.register(registration('claude','live')),current=store.pair(live.id,x.id);
   const dead=store.register(registration('codex','dead'));store.deactivate(dead.id);store.updatePeer(dead.id,{state:'offline'});
+  store.setSetting('codexFinalForward:'+dead.id,{final:'应随死会话清理的最终回复'});
+  store.setSetting('codexFinalForwardStreak:'+archived.id,{used:2});store.setSetting('codexFinalForwardStreak:'+current.id,{used:1});
   store.setSetting('windowRecoveryPending',{[dead.id]:{peerId:dead.id},[live.id]:{peerId:live.id}});
   store.setSetting('managedSessionConflict:'+live.id,{memberId:dead.id});store.setSetting('managedSessionConflict:'+dead.id,{memberId:c.id});
   const later=Date.now()+2000;store.maintain({historyMaxAgeMs:1000,peerMaxIdleMs:1000},later);
   assert.equal(store.currentPair()?.id,current.id);assert.equal(store.peer(live.id).id,live.id);assert.equal(store.peer(x.id).id,x.id);
   assert.throws(()=>store.peer(dead.id),/不存在/);assert.throws(()=>store.peer(c.id),/不存在/);
+  assert.equal(store.setting('codexFinalForward:'+dead.id),undefined);assert.equal(store.setting('codexFinalForwardStreak:'+archived.id),undefined);
+  assert.deepEqual(store.setting('codexFinalForwardStreak:'+current.id),{used:1});
   assert.deepEqual(store.setting('windowRecoveryPending'),{[live.id]:{peerId:live.id}});assert.equal(store.setting('managedSessionConflict:'+live.id),undefined);assert.equal(store.setting('managedSessionConflict:'+dead.id),undefined);
 });
 

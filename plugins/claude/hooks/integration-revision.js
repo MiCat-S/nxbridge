@@ -1,1 +1,1 @@
-export const MOD_REVISION="2ec6bba68ed8b7b6";
+export const MOD_REVISION="d782e1d36ab120df";

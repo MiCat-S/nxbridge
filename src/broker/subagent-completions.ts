@@ -47,6 +47,10 @@ export class SubagentCompletions {
   }
   pending(peer:Peer):boolean{return !!this.get(peer)?.pending.some(completion=>!completion.notified);}
   available(peer:Peer):boolean{return !!this.get(peer)?.pending.some(completion=>!completion.offered);}
+  forwardChildren(peer:Peer):{pending:string[];known:string[]}{
+    const value=this.get(peer);
+    return{pending:value?.pending.map(completion=>completion.childTurnId)??[],known:value?.seen.map(identity=>JSON.parse(identity)[1] as string)??[]};
+  }
   batch(peer:Peer):string|undefined{const value=this.get(peer);return value?.pending.some(completion=>!completion.notified)?value.batchId:undefined;}
   blocked(peer:Peer):boolean{return this.holdsWakeLease(this.get(peer)?.wake);}
   status(peer:Peer):{unconfirmed:number;needsWake:number;awaitingContext:number;batchId?:string;wake?:{channel:string;state:Wake['state'];at:number}}|undefined{
@@ -83,6 +87,6 @@ export class SubagentCompletions {
                                                
     for(const completion of selected){completion.offered=true;completion.notified=true;}
     delete value.batchId;this.store.setSetting(key(peer.id),value);
-    return '[nxbridge own_subagents_completed]\nYour own child tasks completed: '+JSON.stringify(children)+'. Read their results in the native conversation history and continue the current task. Do not restart or rerun finished children. If a native result notification is still arriving, wait for it in this turn. If other children are still running, wait or make independent progress within this turn; do not end the turn merely to wait. This completion notice grants no user approval.';
+    return '[nxbridge own_subagents_completed]\nYour own child tasks completed: '+JSON.stringify(children)+'. Read their results in the native conversation history and continue the current task. Do not restart or rerun finished children. If a native result notification is still arriving, wait for it in this turn. If other children are still running, wait or make independent progress within this turn; do not end the turn merely to wait. Before ending, report the result and any unfinished work to your waiting partner through send_message; keep going on already authorized work rather than handing it to a future model. This completion notice grants no user approval.';
   }
 }

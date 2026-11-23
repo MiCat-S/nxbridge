@@ -62,6 +62,16 @@ test('status 文本：子代理已做完但没法确认主线程接着处理时�
   assert.doesNotMatch(formatStatus({paired:true,self:{id:'c',host:'claude',name:'Claude',state:'ready'},partner:partner({unconfirmed:1,needsWake:0,awaitingContext:1,hold:null}),pending:0,questions:0}),/子代理/);
 });
 
+test('status 文本：Codex 结束一轮没告诉 Claude，只在达到上限或来源确认不了时提示；处理中的正常状态不显示',()=>{
+  const text=(final_forward?:any)=>formatStatus({paired:true,self:{id:'c',host:'claude',name:'Claude',state:'ready'},partner:{id:'x',host:'codex',name:'Codex',state:'ready',...(final_forward?{final_forward}:{})},pending:0,questions:0});
+  assert.match(text({pending:true,hold:'cap_reached',consecutive:2,cap:2,turn_id:'t'}),/已连续自动转给 Claude 2\/2 次，这次不再自动转/);
+  assert.match(text({pending:true,hold:'history_unavailable',consecutive:0,cap:2}),/读不到它的历史记录来核对/);
+  assert.match(text({pending:false,hold:'origin_unverified',consecutive:0,cap:2}),/确认不了这一轮是不是你自己开始的/);
+  assert.doesNotMatch(text({pending:false,hold:'history_unavailable',consecutive:0,cap:2}),/结束一轮没告诉 Claude/,'没有待转的一轮时，历史读不到不能说成 Codex 没告诉 Claude');
+  for(const hold of [null,'partner_not_read','children_pending','codex_turn_running','history_pending','question_pending','partner_reported'])assert.doesNotMatch(text({pending:hold!==null,hold,consecutive:1,cap:2}),/结束一轮没告诉 Claude/);
+  assert.doesNotMatch(text(),/结束一轮没告诉 Claude/);
+});
+
 test('读不到最新一步时状态只说进度暂时无法观测，不说没有进展；有进度证据时照旧',()=>{
   const status=(health:any)=>formatStatus({paired:true,self:{id:'c',host:'claude',name:'Claude',state:'busy'},partner:{id:'x',host:'codex',name:'Codex',state:'busy',health},pending:0,questions:0});
   const silent={state:'silent',turnId:'t',lastProgressAt:Date.now()-11*60000,tools:[]};

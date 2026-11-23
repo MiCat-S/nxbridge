@@ -24,7 +24,7 @@ export function noticeCanWake(notice:RuntimeNotice,_recipient:string):boolean{
   return notice.source==='managed_recovery'&&notice.phase!=='recovery'&&notice.recovery?.wake===true;
 }
 
-export const noticeSignal=(notice:RuntimeNotice)=>({id:notice.id,source:notice.source,tier:noticeTier(notice),wake:noticeTier(notice)===4,...(notice.source==='broker_outage'?{kind:notice.kind,epoch:notice.epoch,since:notice.since,claimedBy:notice.claimedBy}:{})});
+export const noticeSignal=(notice:RuntimeNotice)=>({id:notice.id,source:notice.source,tier:noticeTier(notice),wake:noticeTier(notice)===4,...(notice.readyOnly?{readyOnly:true}:{}),...(notice.source==='broker_outage'?{kind:notice.kind,epoch:notice.epoch,since:notice.since,claimedBy:notice.claimedBy}:{})});
 
                                      
 export class HealthNoticePolicy {
@@ -41,6 +41,8 @@ export class HealthNoticePolicy {
                                           
     if(notice.kind==='explicit_recovery')return true;
     if(state&&now-state.lastAt<HEALTH_NOTICE_INTERVAL_MS)return false;
+                                               
+    if(notice.source==='codex_final'&&notice.factKey!==undefined)return true;
     if(notice.source==='managed_recovery'&&notice.recovery?.wake===true)return true;
     if(notice.phase==='recovery')return true;
     return !last||now-last.at>=HEALTH_NOTICE_REPEAT_MS||(notice.severity??1)>last.severity;

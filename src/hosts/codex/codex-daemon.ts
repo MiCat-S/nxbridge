@@ -13,6 +13,7 @@ import {HEALTH_WAKE_NOTICE,type BridgeConfig,type Peer,type RegisterInput,type C
 import { daemonContextChanged, daemonWakeAuthorized, observeDaemonContext } from './daemon-wake.js';
 import { classifyCodexPermission, persistedCodexPermission, observeCodexPermission } from './codex-permission.js';
 import type { RpcClient } from '../../ipc/rpc.js';
+import type { CodexTurnOriginProvider } from './codex-turn-origin.js';
 import type { Store } from '../../storage/store.js';
 import type { Endpoint, PermissionClass } from '../../types.js';
 import { codexParent, codexSubagent } from './codex-lineage.js';
@@ -38,6 +39,7 @@ export function daemonRegistration(thread:CodexThread,domain:DaemonDomain,rootSe
 }
 
 export class CodexDaemons {
+  turnOrigin?:CodexTurnOriginProvider;
   private clients=new Map<string,Connection>();
   private openings=new Map<string,Promise<Connection|undefined>>();
   private scans=new Map<string,{work:Promise<Connection|undefined>;fresh:boolean}>();
@@ -100,14 +102,17 @@ export class CodexDaemons {
     await rpc.request('thread/inject_items',{threadId:peer.sessionId,items:[{type:'function_call',call_id:callId,name:'receive_messages',namespace:'claude',arguments:'{}'},{type:'function_call_output',call_id:callId,name:'receive_messages',namespace:'claude',output}]},{mutation:true});
   }
   async continueInjected(peer:Peer,endpoint:Endpoint):Promise<string>{
-    const rpc=await this.mutationTarget(peer,endpoint),result=await rpc.request('turn/start',{threadId:peer.sessionId,input:[]},{mutation:true});
+    const scope=this.wakeScope(peer,endpoint),rpc=await this.mutationTarget(peer,endpoint),origin=await this.turnOrigin?.(peer,'partner');
+    if(this.wakeScope(peer,endpoint)!==scope)throw new DeliveryError('daemon_wake_unavailable','原生唤醒授权或上下文已改变。');
+    const result=await rpc.request('turn/start',{threadId:peer.sessionId,input:[],...origin},{mutation:true});
     this.wakeChecks.delete(peer.id);return result.turn.id;
   }
   async wake(peer:Peer,endpoint:Endpoint,beforeSubmit:()=>Promise<boolean>):Promise<string|undefined>{
     const scope=this.wakeScope(peer,endpoint),rpc=await this.mutationTarget(peer,endpoint);
+    const origin=await this.turnOrigin?.(peer,'children');
     if(!await beforeSubmit())return;
     if(this.wakeScope(peer,endpoint)!==scope)throw new DeliveryError('daemon_wake_unavailable','共享 daemon 唤醒授权或当前上下文已改变。');
-    const result=await rpc.request('turn/start',{threadId:peer.sessionId,input:[{type:'text',text:HEALTH_WAKE_NOTICE}]},{mutation:true});
+    const result=await rpc.request('turn/start',{threadId:peer.sessionId,input:[{type:'text',text:HEALTH_WAKE_NOTICE}],...origin},{mutation:true});
     this.wakeChecks.delete(peer.id);
     if(typeof result?.turn?.id!=='string'||!result.turn.id)throw new DeliveryError('wake_result_unknown','原生唤醒没有返回可核验的轮次。',true);
     return result.turn.id;

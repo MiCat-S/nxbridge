@@ -465,7 +465,8 @@ export function register(on) {
             provided.set(notice.id,{state:'queued'});if(provided.size>32)provided.delete(provided.keys().next().value);
             try{
               const result=await deliverNotice($,notice,noticeContext,(state,error)=>reportNotice(notice.id,state,error));
-              if(result?.drop==='condition resolved before delivery')provided.delete(notice.id);
+                                                                              
+              if(result?.drop==='condition resolved before delivery'||result?.deferred===true)provided.delete(notice.id);
               if(result?.drop&&result.drop!=='condition resolved before delivery')reportNotice(notice.id,'denied',String(result.drop));
             }catch(cause){
                                                                      

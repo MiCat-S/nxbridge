@@ -37,9 +37,10 @@ import {ManagedRecovery} from '../recovery/managed-recovery.js';
 import {hostingGate,hostingStatus} from '../recovery/session-hosting.js';
 import {readSessionProfile,sessionFile} from '../../hosts/codex/codex-session-profile.js';
 import type {Adapters} from '../coordinator.js';
+import type {CodexFinalForwards} from '../codex-final-forwards.js';
 
 interface HealthEnvironment {readonly store:Store;readonly config:BridgeConfig;readonly adapters:Adapters;readonly home:string;readonly resources?:ResourceHealth;}
-interface HealthServices {readonly incidents:RuntimeIncidents;readonly deliveryHealth:DeliveryHealth;readonly communicationTips:CommunicationTips;readonly pairAnomalies:PairAnomalies;readonly idleNotices:IdleNotices;readonly profiles:PartnerProfiles;readonly foregroundHealth:ForegroundHealth;readonly managedRecovery:ManagedRecovery;readonly health:TurnHealthTracker;readonly codexDirect:CodexDirectDelivery;readonly daemons:CodexDaemons;readonly questions:Questions;}
+interface HealthServices {readonly incidents:RuntimeIncidents;readonly deliveryHealth:DeliveryHealth;readonly communicationTips:CommunicationTips;readonly pairAnomalies:PairAnomalies;readonly idleNotices:IdleNotices;readonly profiles:PartnerProfiles;readonly foregroundHealth:ForegroundHealth;readonly managedRecovery:ManagedRecovery;readonly health:TurnHealthTracker;readonly codexDirect:CodexDirectDelivery;readonly daemons:CodexDaemons;readonly questions:Questions;readonly finalForwards:CodexFinalForwards;}
 interface HealthHooks {
  stopped():boolean;
  actor(input:Actor):Peer;
@@ -121,6 +122,7 @@ export class BrokerHealthCoordinator {
   refreshNoticeConditions(pair:Pair,site:string):void{
     const {store}=this.environment;
       if(!this.hooks.enabled(pair.claude)||!this.hooks.enabled(pair.codex))return;
+      this.services.finalForwards.refresh(pair);
       const stages=[...new Set(store.faults.status().filter(value=>value.degraded).map(value=>value.stage.split(':')[0]!))].sort(),key='brokerDegraded:'+pair.id;
       let degraded=store.setting<{id:string}>(key);
       if(stages.length){if(!degraded){degraded={id:randomUUID()};store.setSetting(key,degraded);}}
@@ -137,7 +139,7 @@ export class BrokerHealthCoordinator {
       }
     }
 
-  async prepareNotices(actor:Actor,ids?:string[],admit=true,requireWake=false):Promise<RuntimeNotice[]>{
+  async prepareNotices(actor:Actor,ids?:string[],admit=true,requireWake=false,readyBoundary=false):Promise<RuntimeNotice[]>{
     const {store}=this.environment;
       const sender=this.hooks.actor(actor),pair=store.pairFor(sender.id);if(!pair||pair.paused)return[];
       if(hostingGate(store,sender))return[];
@@ -159,7 +161,7 @@ export class BrokerHealthCoordinator {
                                                    
       const selected=ids?ids.flatMap(id=>{const n=this.services.deliveryHealth.get(pair.id,sender.id,id);return n?[n]:[]}):this.services.deliveryHealth.peek(pair.id,sender.id);
       if(admit)this.assertClaudeNoticeSession(sender);
-      return admit?this.admitNotices(pair,sender,selected,scope,requireWake):selected;
+      return admit?this.admitNotices(pair,sender,selected,scope,requireWake,readyBoundary):selected;
     }
 
   assertClaudeNoticeSession(peer:Peer):void{
@@ -169,10 +171,12 @@ export class BrokerHealthCoordinator {
       assertClaudeSession(endpoint.configHome,peer.sessionId,{pid:endpoint.pid,procStart:endpoint.procStart});
     }
 
-  admitNotices(pair:Pair,sender:Peer,selected:RuntimeNotice[],scope:string,requireWake=false):RuntimeNotice[]{
+  admitNotices(pair:Pair,sender:Peer,selected:RuntimeNotice[],scope:string,requireWake=false,readyBoundary=false):RuntimeNotice[]{
       return this.environment.store.transaction(()=>selected.flatMap(n=>{
-        const prepared=this.services.deliveryHealth.prepare(pair.id,sender.id,n.id,scope,false,requireWake);
+        const allowReady=sender.host==='claude'&&readyBoundary&&this.services.finalForwards.ready(pair,true);
+        const prepared=this.services.deliveryHealth.prepare(pair.id,sender.id,n.id,scope,false,requireWake,allowReady);
         if(prepared){
+          this.services.finalForwards.admitted(pair,prepared);
           const key='turnHealthIncident:'+pair.id,value=this.environment.store.setting<{id:string;alertAdmitted?:boolean}>(key);
           if(value&&prepared.componentIds?.includes(value.id)){value.alertAdmitted=true;this.environment.store.setSetting(key,value);}
         }
