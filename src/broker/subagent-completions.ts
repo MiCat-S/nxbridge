@@ -47,9 +47,10 @@ export class SubagentCompletions {
   }
   pending(peer:Peer):boolean{return !!this.get(peer)?.pending.some(completion=>!completion.notified);}
   available(peer:Peer):boolean{return !!this.get(peer)?.pending.some(completion=>!completion.offered);}
-  forwardChildren(peer:Peer):{pending:string[];known:string[]}{
+  forwardChildren(peer:Peer):{pending:string[];known:string[];wakePending:boolean}{
     const value=this.get(peer);
-    return{pending:value?.pending.map(completion=>completion.childTurnId)??[],known:value?.seen.map(identity=>JSON.parse(identity)[1] as string)??[]};
+                                           
+    return{pending:value?.pending.filter(completion=>!completion.notified).map(completion=>completion.childTurnId)??[],known:value?.seen.map(identity=>JSON.parse(identity)[1] as string)??[],wakePending:this.holdsWakeLease(value?.wake)};
   }
   batch(peer:Peer):string|undefined{const value=this.get(peer);return value?.pending.some(completion=>!completion.notified)?value.batchId:undefined;}
   blocked(peer:Peer):boolean{return this.holdsWakeLease(this.get(peer)?.wake);}

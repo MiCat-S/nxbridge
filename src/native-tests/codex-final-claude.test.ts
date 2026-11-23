@@ -90,6 +90,13 @@ test('实际 Claude：Codex 结束一轮未告知时，Claude 忙时不送；空
   const history=path.join(codexhome,'sessions','2026','11','23','rollout-fixture-'+codexSession+'.jsonl');mkdirSync(path.dirname(history),{recursive:true});
   writeFileSync(history,JSON.stringify({type:'session_meta',payload:{id:codexSession}})+'\n','utf8');
   store.setSetting('codexTranscript:'+codex.id,{sessionId:codexSession,file:history});
+                                           
+  for(const child of ['first-child','second-child'])broker.subagentCompletions.record(store.peer(codex.id),child,child+'-turn',undefined,history);
+  const childWake=broker.subagentCompletions.reserve(store.peer(codex.id),'native');assert.ok(childWake);
+  broker.subagentCompletions.outcome(store.peer(codex.id),childWake,'submitted','completed-child-wake');
+  assert.ok(broker.subagentCompletions.consume(store.peer(codex.id),broker.subagentCompletions.context(store.peer(codex.id))));
+  broker.subagentCompletions.settle(store.peer(codex.id),history,'completed-child-wake');
+  assert.equal(broker.subagentCompletions.status(store.peer(codex.id))?.unconfirmed,2);
                                                        
   const last=store.accept(pair,store.peer(codex.id),'隔离进度：控制台候选已构建，接着做公网检查','fixture-last-send');
   store.transition(last.id,'contextObserved','原生上下文已核验');
@@ -112,6 +119,7 @@ test('实际 Claude：Codex 结束一轮未告知时，Claude 忙时不送；空
   const codexPeer=()=>store.peer(codex.id),status=()=>broker.finalForwards.status(codexPeer()) as any;
   await broker.finalForwards.scan(codexPeer());broker.finalForwards.refresh(pair);
   assert.equal(status()?.pending,true,'候选应已形成');assert.equal(status()?.turn_id,turnId);assert.equal(status()?.last_read_message_id,last.id);
+  assert.equal(status()?.waiting_children,0,'已通知而未确认的旧记录不是待唤醒任务');
   stage('忙碌期间经过至少一次 Mod 监测');
   const busyFrom=Date.now();await delay(17000);
   assert.equal(claude()?.state,'busy');
@@ -130,6 +138,7 @@ test('实际 Claude：Codex 结束一轮未告知时，Claude 忙时不送；空
   const after=Date.now();await delay(17000);
   assert.equal(requests.filter(r=>r.at>=after).length,0,'同一回合只叫醒一次');
   assert.equal(status()?.pending,false);assert.equal(status()?.consecutive,1);
+  assert.equal(broker.subagentCompletions.status(codexPeer())?.unconfirmed,2,'自动转达不伪造子结果的读取证明');
   assert.equal(store.messages().length,messagesBefore,'转发不能伪造成搭档消息');
   assert.deepEqual(errors,[]);
   passed=true;t.diagnostic(JSON.stringify({actualClaudePid:terminal.identity.pid,busyHeld:true,idleWokenOnce:true,verbatimFinal:true,realModelCalls:0}));

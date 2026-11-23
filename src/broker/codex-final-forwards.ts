@@ -15,7 +15,7 @@ interface Streak {lastSend?:string;lastSendAt?:number;used:number}
 export interface FinalForwardOptions {
   source:(peer:Peer)=>{file?:string;owned:boolean};
   gate:(codex:Peer,claude:Peer)=>string|undefined;
-  children:(peer:Peer)=>{pending:string[];known:string[]};
+  children:(peer:Peer)=>{pending:string[];known:string[];wakePending:boolean};
   read?:typeof readCodexTurnEvidence;
 }
 const key=(peerId:string)=>'codexFinalForward:'+peerId;
@@ -166,7 +166,9 @@ export class CodexFinalForwards {
     if(evidence?.status!=='supported')return'history_unavailable';
     if(!evidence?.caughtUp)return'history_pending';
     if(evidence.openTurnId)return'codex_turn_running';
-    if(candidate.children.length||this.options.children(peer).pending.length)return'children_pending';
+                                         
+    const children=this.options.children(peer);
+    if(children.pending.length||children.wakePending)return'children_pending';
     if(this.budget(scope.pair).used>=CODEX_FINAL_FORWARD_CAP)return'cap_reached';
     if(candidate.noticeId&&!this.notices.eligible(scope.pair.id,scope.claude.id,candidate.noticeId))return'notice_cooldown';
   }
@@ -209,9 +211,9 @@ export class CodexFinalForwards {
     const scope=this.context(peer),value=this.get(peer,false);if(!scope||!value)return;
     const send=this.store.lastMessageFacts(scope.pair.id,peer.id);
     if(send&&value.lastSend!==send.id&&(value.lastSendAt===undefined||send.createdAt>=value.lastSendAt)){delete value.candidate;delete value.hold;}
-    const candidate=value.candidate,budget=this.budget(scope.pair);
+    const candidate=value.candidate,budget=this.budget(scope.pair),children=this.options.children(peer);
     const pending=!!candidate&&!value.seen.includes(candidate.primary.turnId);
     return{pending,hold:pending?this.reason(peer,value)??null:value.hold??null,consecutive:budget.used,cap:CODEX_FINAL_FORWARD_CAP,
-      ...(candidate?{turn_id:candidate.primary.turnId,last_read_message_id:candidate.anchor,anchor_from:candidate.anchorFrom,waiting_children:candidate.children.length,followup_turn_id:candidate.followup?.turnId}:{}),...(value.lastForward?{last_forward:value.lastForward}:{})};
+      ...(candidate?{turn_id:candidate.primary.turnId,last_read_message_id:candidate.anchor,anchor_from:candidate.anchorFrom,waiting_children:pending?children.pending.length:0,child_wake_pending:pending&&children.wakePending,followup_turn_id:candidate.followup?.turnId}:{}),...(value.lastForward?{last_forward:value.lastForward}:{})};
   }
 }

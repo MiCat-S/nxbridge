@@ -2,7 +2,9 @@ import test,{type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import {appendFileSync,writeFileSync} from 'node:fs';
 import path from 'node:path';
-import {CodexFinalForwards} from '../broker/codex-final-forwards.js';
+import {CodexFinalForwards,type FinalForwardOptions} from '../broker/codex-final-forwards.js';
+import {SubagentCompletions} from '../broker/subagent-completions.js';
+import {CODEX_WAKE_RETRY_MS} from '../hosts/codex/codex-wake.js';
 import {DeliveryHealth} from '../broker/health/delivery.js';
 import {noticeScope} from '../broker/health/contracts.js';
 import type {CodexCompletedTurn,CodexTurnEvidence} from '../hosts/codex/codex-turn-evidence.js';
@@ -16,8 +18,9 @@ function setup(t:TestContext,owned=false){
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),health=new DeliveryHealth(f.store);
   f.store.saveEndpoint({...f.store.endpoint(f.c.id)!,modRevision:MOD_REVISION});
   const evidence:CodexTurnEvidence={status:'supported',caughtUp:true,turns:[],bytesRead:0};
-  const children={pending:[] as string[],known:[] as string[]};
-  const ledger=()=>new CodexFinalForwards(f.store,health,{source:()=>({owned}),children:()=>children,read:async()=>evidence,
+  const children={pending:[] as string[],known:[] as string[],wakePending:false};
+  let readChildren:FinalForwardOptions['children']=()=>children;
+  const ledger=()=>new CodexFinalForwards(f.store,health,{source:()=>({owned}),children:peer=>readChildren(peer),read:async()=>evidence,
     gate:(codex,claude)=>f.store.pairFor(codex.id)?.paused?'paused':codex.enabled===false||claude.enabled===false?'disabled':
       codex.state!=='ready'?'codex_busy':claude.state!=='ready'?'claude_busy':undefined});
   const forwards=ledger();
@@ -39,7 +42,8 @@ function setup(t:TestContext,owned=false){
       lastWorkAt:now-2,final:{itemId:'answer-'+turnId,text:'未发送的最终结果 '+sequence,at:now-1},...extra};
     evidence.turns.push(value);evidence.latestTurnId=turnId;return value;
   };
-  return{...f,pair,health,evidence,children,forwards,ledger,send,read,pending,admit,turn,status:()=>forwards.status(f.x) as any};
+  const useCompletions=()=>{const completions=new SubagentCompletions(f.store);readChildren=peer=>completions.forwardChildren(peer);return completions;};
+  return{...f,pair,health,evidence,children,forwards,ledger,send,read,pending,admit,turn,useCompletions,status:()=>forwards.status(f.x) as any};
 }
 
 test('真正结束且发信之后仍有原生活动才转达；只发信再收尾不触发',async t=>{
@@ -97,6 +101,33 @@ test('子任务钩子不能授权转发人工入队轮次的正文；已证明�
   f.turn(await f.forwards.origin(f.x,'partner'));await f.read();assert.deepEqual(f.pending(),[]);
   const child=f.turn(await f.forwards.origin(f.x,'children'),{childTurnIds:['second-child']});
   f.children.pending=[];await f.read();assert.ok(f.pending()[0]!.message.includes(child.final!.text));
+});
+
+test('已唤醒并提供过的未确认子结果不再阻塞既有最终回复，保留原读取证明账本',async t=>{
+  const f=setup(t),completions=f.useCompletions();f.send();
+  completions.record(f.x,'first-agent','first-child',undefined,undefined);completions.record(f.x,'second-agent','second-child',undefined,undefined);
+  const primary=f.turn(await f.forwards.origin(f.x,'partner'));await f.read();assert.equal(f.status().hold,'children_pending');
+  const wake=completions.reserve(f.x,'native');assert.ok(wake);
+  completions.outcome(f.x,wake,'submitted','child-wake-turn');assert.ok(completions.consume(f.x,completions.context(f.x)));
+  completions.settle(f.x,undefined,'child-wake-turn');
+  assert.equal(completions.status(f.x)?.unconfirmed,2);assert.equal(completions.pending(f.x),false);assert.equal(completions.available(f.x),false);
+                                           
+  f.forwards.refresh(f.pair);assert.equal(f.pending().length,1);assert.ok(f.pending()[0]!.message.includes(primary.final!.text));
+  assert.equal(f.status().waiting_children,0);f.admit();await f.read();assert.deepEqual(f.pending(),[]);
+  assert.equal(completions.status(f.x)?.unconfirmed,2,'转达不能冒充已读取子结果');
+});
+
+test('子任务唤醒 RPC 在途及返回后的合并期限仍阻塞转达，过期不重放已通知的事实',async t=>{
+  const f=setup(t),completions=f.useCompletions();f.send();completions.record(f.x,'agent','child',undefined,undefined);
+  f.turn(await f.forwards.origin(f.x,'partner'));await f.read();
+  const wake=completions.reserve(f.x,'native');assert.ok(wake);assert.ok(completions.consume(f.x,completions.context(f.x)));
+  t.mock.timers.tick(CODEX_WAKE_RETRY_MS+1);f.forwards.refresh(f.pair);assert.equal(f.forwards.ready(f.pair),false,'在途 RPC 不因年龄放行');
+  completions.outcome(f.x,wake,'unknown');t.mock.timers.tick(CODEX_WAKE_RETRY_MS-1);
+  f.forwards.refresh(f.pair);assert.equal(f.forwards.ready(f.pair),false,'回执返回后重新计算合并期限');
+  t.mock.timers.tick(1);f.forwards.refresh(f.pair);assert.equal(f.forwards.ready(f.pair),true);
+  assert.equal(completions.status(f.x)?.unconfirmed,1);assert.equal(completions.pending(f.x),false);
+  completions.record(f.x,'new-agent','new-child',undefined,undefined);f.forwards.refresh(f.pair);
+  assert.equal(f.forwards.ready(f.pair),false);assert.equal(f.status().waiting_children,1,'新的未通知结果仍阻塞旧候选');
 });
 
 test('已暂缓的主结果遇到原生回退或历史替换会取消，不在恢复空闲后转发撤回的内容',async t=>{
