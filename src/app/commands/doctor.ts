@@ -71,7 +71,12 @@ export async function diagnose(home=bridgeHome()):Promise<Record<string,unknown>
   const native=managedRuntimes(home).map(record=>record.value),persistent=persistentEnvironment();
   result.managedRuntimes=await Promise.all(native.map(async value=>({...value,ownership:'本安装的启动记录',dedicatedProof:value.dedicated===true?'启动时已核验，停止前仍需重新核验':'尚未核验独占性',processState:await managedRuntimeState(home,value)})));
   result.background=backgroundState(home)??null;
-  result.ownedEnvironment={receipts:['broker','codex-app-server','claude-background','claude-child'].flatMap(role=>{const file=path.join(home,'run','launch-'+role+'.json');return existsSync(file)?[{role,...readJson<Record<string,unknown>>(file)}]:[];}),warnings:(profileState(home).observations??[]).filter(value=>native.some(runtime=>runtime.pid===value.sourcePid&&runtime.procStart===value.sourceGeneration)).flatMap(value=>loopbackProxyNames(value.env).filter(key=>value.env[key]!==persistent[key]).map(key=>({host:value.host,pid:value.sourcePid,variable:key,message:'检测到窗口使用了一个系统环境里没有设置的本地代理（来自窗口登记时的记录，不是实时读取）。如果后台会话连不上模型服务，先检查这个代理。'})))};
+  const receipts=['broker','codex-app-server','claude-background','claude-child'].flatMap(role=>{
+    const file=path.join(home,'run','launch-'+role+'.json');
+    try{return[{role,...readJson<Record<string,unknown>>(file)}];}
+    catch(error){return (error as NodeJS.ErrnoException).code==='ENOENT'?[]:[{role,error:'启动诊断记录无法读取：'+describeError(error)}];}
+  });
+  result.ownedEnvironment={receipts,warnings:(profileState(home).observations??[]).filter(value=>native.some(runtime=>runtime.pid===value.sourcePid&&runtime.procStart===value.sourceGeneration)).flatMap(value=>loopbackProxyNames(value.env).filter(key=>value.env[key]!==persistent[key]).map(key=>({host:value.host,pid:value.sourcePid,variable:key,message:'检测到窗口使用了一个系统环境里没有设置的本地代理（来自窗口登记时的记录，不是实时读取）。如果后台会话连不上模型服务，先检查这个代理。'})))};
   const probes:[string,()=>Promise<unknown>][]=[
     ['codexVersion',async()=>(await runCli('codex',['--version'],{config,home})).trim()],
     ['claudeVersion',async()=>(await runCli('claude',['--version'],{config,home})).trim()],

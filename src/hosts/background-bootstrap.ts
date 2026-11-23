@@ -1,4 +1,5 @@
-import { connectBroker, ensureBroker, serviceOrigin } from '../ipc/ipc.js';
+import { connectBroker, ensureBroker, installationEnabled, serviceOrigin } from '../ipc/ipc.js';
+import {preflightIpcTokenRepair,repairIpcToken} from '../ipc/token-repair.js';
 import {bridgeHome} from '../shared/local-paths.js';
 import {delay} from '../shared/time.js';
 import { processIdentity } from '../process/process.js';
@@ -11,7 +12,15 @@ import { verifyBackgroundContext } from './background-preflight.js';
                                      
 export async function bootstrapBackground(home=bridgeHome(),services:{preflight?:typeof verifyBackgroundContext}={}):Promise<{text:string}>{
   let current:{pid:number;runtime?:{generation:string;windowsIndependent?:boolean}}|undefined;
-  try{const rpc=await connectBroker(home);try{current=await rpc.request('ping',{});}finally{rpc.close();}}catch(error){if(!['ENOENT','ECONNREFUSED','ECONNRESET','EPIPE','broker_timeout','disconnected','starting'].includes((error as {code?:string}).code??''))throw error;}
+  let needsTokenRepair=false;
+  try{const rpc=await connectBroker(home);try{current=await rpc.request('ping',{});}finally{rpc.close();}}
+  catch(error){
+    const code=(error as {code?:string}).code??'';
+    if(code==='ipc_token_invalid'){
+      if(!installationEnabled(home))throw new BridgeError('uninstalled','nxbridge 已卸载；运行 setup 后重新启用。');
+      needsTokenRepair=await preflightIpcTokenRepair(home);
+    }else if(!['ENOENT','ECONNREFUSED','ECONNRESET','EPIPE','broker_timeout','disconnected','starting'].includes(code))throw error;
+  }
   if(current&&(process.platform!=='win32'||current.runtime?.windowsIndependent)){
     recordBackgroundState(home);
     return{text:`后台协调器已在独立运行（进程 ${current.pid}），无需重复操作。`};
@@ -21,6 +30,7 @@ export async function bootstrapBackground(home=bridgeHome(),services:{preflight?
   if(!caller)throw new BridgeError('broker_origin_unverified','无法核验引导命令的原生进程身份。');
   const release=await reserveBrokerStartup(home,caller);
   try{
+    if(needsTokenRepair)await repairIpcToken(home,release);
     if(current){
       const identity=await processIdentity(current.pid);
       if(current.runtime?.generation&&identity.startedAt!==current.runtime.generation)throw new BridgeError('broker_changed','协调器已改变，请重新运行引导命令。');

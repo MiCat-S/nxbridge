@@ -2,13 +2,14 @@ import net from 'node:net';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { bridgeHome, codexHome, claudeHome, ipcAddress } from '../../shared/local-paths.js';
+import { ipcToken } from '../../ipc/token.js';
 import { disabledMember } from '../../broker/member-state.js';
 import {BridgeError} from '../../shared/errors.js';
 import {isEmbeddedWake,type Host} from '../../types.js';
 
                                               
 async function request(home:string,method:string,params:unknown,timeout:number):Promise<any>{
-  let token:string;try{token=readFileSync(path.join(home,'run','token'),'utf8').trim();}catch(error){throw Object.assign(error as Error,{hookUnsubmitted:true});}
+  let token:string;try{token=ipcToken(home);}catch(error){throw Object.assign(error as Error,{hookUnsubmitted:true});}
   return new Promise((resolve,reject)=>{
     const socket=net.createConnection(ipcAddress(home));let submitted=false,done=false,buffer='';
     const finish=(error?:unknown,result?:unknown)=>{if(done)return;done=true;clearTimeout(timer);socket.destroy();if(error)reject(Object.assign(error as Error,submitted?{}:{hookUnsubmitted:true}));else resolve(result);};

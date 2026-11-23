@@ -1,6 +1,7 @@
-import { mkdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { atomicWriteText } from '../../storage/atomic-file.js';
+import {stateDirectory} from '../../storage/state-directory.js';
 import {BridgeError,describeError} from '../../shared/errors.js';
 import {type BridgeConfig,type Host,type ModelProfile} from '../../types.js';
 
@@ -20,7 +21,7 @@ function readState(home:string):FrozenProfileState{
   return state;
 }
 function saveState(home:string,state:FrozenProfileState):void{
-  mkdirSync(home,{recursive:true,mode:0o700});
+  stateDirectory(home,0o700);
   atomicWriteText(filename(home),JSON.stringify(state,null,2)+'\n');
 }
 export function frozenProfiles(home:string,config:BridgeConfig):Partial<Record<Host,FrozenProfile>>{

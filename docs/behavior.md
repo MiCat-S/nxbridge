@@ -223,7 +223,7 @@ nxbridge doctor
   - 只在空闲时送：协调器写入唤醒标记前确认 Claude 当前空闲，忙时返回 `deferred`，不写标记。Mod 只在原生空闲边界（唤醒标记以 meta 提示到达、不在回合中）领取时声明 `ready_boundary`。普通提交、工具结果和忙时的领取不能领取或合并这条提醒，返回 `deferred` 时保留同一编号，等下次空闲再送，不计入次数。
   - 上限：连续自动转发 2 次、其间 Codex 没有真正发出搭档消息时保留（`cap_reached`）。Codex 真正发出一条搭档消息，或出现经核验的人工输入（Claude 窗口里的用户提交，或 Codex 窗口里的人工输入）后重新计数；Claude 的推动不重置计数。送达结果不明的不重放。同一接收方的全局 60 秒提醒间隔内保留为 `notice_cooldown`；新的 `codex_final` 事实不受同类提醒 10 分钟重复间隔限制，同一事实仍去重。
   - 闸门：沿用暂停、禁用、中断暂停、离线、运行时、配置和原生审批闸门。Codex 有待用户回答的问题（`question_pending`）、有已记录且待处理的子代理完成唤醒（`children_pending`；只等已记录的完成批次，不等仍在运行、尚未完成的子代理）、回合仍在进行（`codex_turn_running`），或 Claude 没读到上一条消息（`partner_not_read`）时不转。Claude 窗口的插件还是不支持空闲边界的旧版本时先不送（`mod_pending`），等插件在空闲时自动重新加载后再送，旧插件不会收到这条提醒的唤醒标记。
-  - 状态：`status` / `doctor` 里成员的 `final_forward`（`pending`、`hold`、`consecutive`、`cap`、`turn_id`、`last_read_message_id`、`anchor_from`、`waiting_children`、`followup_turn_id`、`last_forward`）。
+  - 状态：`status` / `doctor` 里成员的 `final_forward`（`pending`、`hold`、`consecutive`、`cap`、`turn_id`、`last_read_message_id`、`anchor_from`、`waiting_children`、`child_wake_pending`、`followup_turn_id`、`last_forward`）。
 
 ### 卡住的 Codex 轮次（`recover`）
 

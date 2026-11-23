@@ -161,7 +161,7 @@ export async function verifyLaunchImages(launch:HostLaunch,probe:(image:string)=
   return checked.output;
 }
 export function recordHostLaunch(home:string,role:string,launch:HostLaunch,pid?:number):void{
-  const run=path.join(home,'run');if(existsSync(run))atomicJson(path.join(run,`launch-${role}.json`),{...launchMetadata(launch),pid:pid??null,spawnedAt:Date.now()});
+  const run=path.join(home,'run');if(existsSync(run))atomicJson(path.join(run,`launch-${role}.json`),{...launchMetadata(launch),pid:pid??null,spawnedAt:Date.now()},{durability:'buffered'});
 }
 export function spawnSelectedHost(launch:HostLaunch,args:string[],options:Parameters<typeof spawn>[2]={}){
   const argv=launch.host==='claude'?claudeLaunchArgs(launch.executable.prefix,args,typeof options?.cwd==='string'?options.cwd:launch.cwd):[...launch.executable.prefix,...args];

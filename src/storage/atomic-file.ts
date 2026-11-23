@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { writeFileSync, renameSync, unlinkSync, linkSync } from 'node:fs';
+import path from 'node:path';
 import { windowsFileLockOwners } from '../process/windows/windows-file-lock.js';
+import {syncDirectory} from './state-directory.js';
 
 const BACKOFF=[20,40,80,160,320,640];
 const sleeper=new Int32Array(new SharedArrayBuffer(4));
@@ -17,18 +19,23 @@ export function retryWindowsFileOperation<T>(operation:()=>T,filename:string,opt
   }
 }
 
-                                 
-export function atomicWriteText(filename:string,text:string,exclusive=false):void{
-  atomicWriteFile(filename,text,exclusive);
+export interface AtomicWriteOptions {exclusive?:boolean;durability?:'durable'|'buffered'}
+
+                                            
+export function atomicWriteText(filename:string,text:string,options:AtomicWriteOptions={}):void{
+  atomicWriteFile(filename,text,options);
 }
 
-export function atomicWriteFile(filename:string,content:string|Buffer,exclusive=false):void{
+export function atomicWriteFile(filename:string,content:string|Buffer,options:AtomicWriteOptions={}):void{
+  const exclusive=options.exclusive??false,durable=options.durability!=='buffered';
   const temporary=filename+'.'+randomUUID()+'.tmp';
   let failure:unknown,temporaryPresent=true;
   try{
-    writeFileSync(temporary,content,{encoding:'utf8',mode:0o600,flag:'wx',...(exclusive?{flush:true}:{})});
+    writeFileSync(temporary,content,{encoding:'utf8',mode:0o600,flag:'wx',flush:durable});
     retryWindowsFileOperation(()=>exclusive?linkSync(temporary,filename):renameSync(temporary,filename),filename);
     if(!exclusive)temporaryPresent=false;
+                                       
+    if(durable)syncDirectory(path.dirname(filename));
   }catch(error){failure=error;throw error;}
   finally{
     try{if(temporaryPresent)retryWindowsFileOperation(()=>unlinkSync(temporary),temporary);}catch(error){

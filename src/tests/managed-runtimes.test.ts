@@ -40,6 +40,8 @@ test('原生恢复只借用同配置目录中实际加载的明确会话，死�
 test('认证后台凭证不进入状态与参数，原窗口认证选择保持不变，回收记录一并删除凭证',async t=>{
   const home=temporary(t);await ensureHome(home);const value=record(home,'authenticated',{endpoint:'ws://127.0.0.1:12345',authenticatedLoopback:true,state:'ready',pid:process.pid,procStart:(await processIdentity(process.pid)).startedAt});saveManagedRuntime(home,value);
   const file=createRuntimeToken(home,value),token=managedRuntimeToken(home,value.endpoint)!;assert.match(token,/^[a-f0-9]{64}$/);assert.equal(JSON.stringify(managedRuntimes(home)).includes(token),false);
+  assert.throws(()=>createRuntimeToken(home,value),{code:'EEXIST'});
+  assert.equal(readFileSync(file,'utf8'),token);
   assert.equal(localCodexEndpoint(home,value.endpoint),true);assert.equal(localCodexEndpoint(undefined,value.endpoint),false);
   assert.equal(localCodexEndpoint(home,'ws://127.0.0.1:12346'),false);assert.equal(localCodexEndpoint(home,'ws://localhost:12345'),false);assert.equal(localCodexEndpoint(home,'wss://remote.invalid'),false);
   const original=['--remote',value.endpoint,'resume','--last'],authentication=await managedRemoteAuthentication(home,original);
@@ -47,6 +49,13 @@ test('认证后台凭证不进入状态与参数，原窗口认证选择保持�
   assert.deepEqual((await managedRemoteAuthentication(home,['--remote',value.endpoint,'--remote-auth-token-env','USER_TOKEN'])).env,{});
   assert.deepEqual((await managedRemoteAuthentication(home,['--','--remote',value.endpoint])).env,{});
   if(process.platform!=='win32'){assert.equal(statSync(file).mode&0o777,0o600);chmodSync(file,0o644);assert.equal(managedRuntimeToken(home,value.endpoint),token);chmodSync(file,0o600);}
+  for(const content of [Buffer.alloc(0),Buffer.alloc(64),Buffer.from('deadbeef')]){
+    writeFileSync(file,content);
+    assert.throws(()=>managedRuntimeToken(home,value.endpoint),{code:'runtime_token_invalid'});
+    await assert.rejects(managedRemoteAuthentication(home,original),{code:'runtime_token_invalid'});
+    assert.deepEqual(readFileSync(file),content,'读取损坏凭证不能静默换密或降级为匿名连接');
+  }
+  writeFileSync(file,token,'utf8');
   removeManagedRuntime(runtimeFor(home,{id:value.id})!);assert.equal(existsSync(file),false);assert.equal(managedRuntimeToken(home,value.endpoint),undefined);assert.equal(localCodexEndpoint(home,value.endpoint),false);
 });
 

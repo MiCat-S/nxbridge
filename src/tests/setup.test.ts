@@ -11,8 +11,49 @@ import {CLI_PATH} from '../shared/package-location.js';
 import { fileHashes } from '../install/runtime-install.js';
 import { withBrokerStartup } from '../broker/broker-startup.js';
 import { processIdentity } from '../process/process.js';
+import { listenBroker } from '../ipc/ipc.js';
+import { ownedSocketDirectory } from '../shared/local-paths.js';
 
 import { fixture, autonomousNext } from './setup-fixture.js';
+
+test('升级保留有效的 IPC 令牌，旧令牌为空且没有监听时重新生成并启动协调器',async t=>{
+  const f=fixture(t),file=path.join(f.home,'run','token');
+  await setup({home:f.home},f.services);
+  const token=readFileSync(file,'utf8');
+  await setup({home:f.home},f.services);
+  assert.equal(readFileSync(file,'utf8'),token);
+  writeFileSync(file,'','utf8');
+  const preview=await setup({home:f.home,dryRun:true},f.services) as {actions:string[]};
+  assert.ok(preview.actions.some(action=>action.includes('修复损坏的本地 IPC 令牌')));
+  assert.equal(readFileSync(file,'utf8'),'');
+  let starts=0;
+  f.services.broker=async(method,_params,options)=>{
+    if(method==='ping'&&options?.start!==false){
+      starts++;assert.match(readFileSync(file,'utf8'),/^[a-f0-9]{64}$/);return {pid:process.pid} as any;
+    }
+    throw Object.assign(Error('隔离 broker 不存在'),{code:'ENOENT'});
+  };
+  const result=await setup({home:f.home},f.services) as {brokerRestarted:boolean};
+  assert.equal(result.brokerRestarted,true);
+  assert.equal(starts,1);
+  assert.notEqual(readFileSync(file,'utf8'),token);
+});
+
+test('旧 Claude worker 仍监听时，损坏令牌阻止升级且保留安装和原连接',{skip:process.platform!=='linux'},async t=>{
+  const f=fixture(t),file=path.join(f.home,'run','token');
+  await setup({home:f.home},f.services);
+  const address=path.join(ownedSocketDirectory(f.home),'cc-0123456789abcdef.sock');
+  const server=await listenBroker(f.home,async()=>({}),address);
+  try{
+    const corrupted=Buffer.alloc(64);writeFileSync(file,corrupted);
+    const before=fileHashes(f.home, [path.relative(f.home,address).replaceAll('\\','/')]),calls=f.calls.length;
+    await assert.rejects(setup({home:f.home},f.services),{code:'ipc_token_repair_blocked',message:/重启电脑，或等后台 Claude 退出后，再运行同样的安装命令/});
+    assert.deepEqual(fileHashes(f.home, [path.relative(f.home,address).replaceAll('\\','/')]),before);
+    assert.equal(f.calls.length,calls);
+    assert.deepEqual(readFileSync(file),corrupted);
+    assert.equal(existsSync(address),true);
+  }finally{await server.close();}
+});
 
 test('重复准备保留稳定入口及未变文件，清理废弃文件而不删除插件目录',async t=>{
   const f=fixture(t),root=await preparePlugins(f.home),target=path.join(root,'plugins','codex'),bridge=path.join(target,'bridge.cjs'),old=new Date('2000-01-01T00:00:00Z');

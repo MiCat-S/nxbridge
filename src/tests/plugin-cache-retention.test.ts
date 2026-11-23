@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { temporary } from './support/temporary.js';
 import {atomicJson,readJson} from '../shared/files.js';
@@ -37,6 +38,27 @@ test('官方 add 失败仍恢复原缓存；恢复冲突保留用户内容和副
   assert.equal(readFileSync(path.join(f.old,'user'),'utf8'),'用户内容');const pending=readFileSync(f.pending,'utf8');
   await assert.rejects(recoverRetainedCaches(f.home,true),/预览未修改/);assert.equal(readFileSync(f.pending,'utf8'),pending);
   rmSync(f.old,{recursive:true});await recoverRetainedCaches(f.home);assert.deepEqual(fileHashes(f.old),before);assert.equal(existsSync(f.pending),false);
+});
+
+test('恢复记录已发布但目录刷新失败时保留原字节副本，重试仍可恢复',{skip:process.platform==='win32'},async t=>{
+  const f=fixture(t),before=fileHashes(f.old),fs=createRequire(import.meta.url)('node:fs') as typeof import('node:fs'),sync=fs.fsyncSync;
+  t.mock.method(fs,'fsyncSync',(descriptor:number)=>{
+    if(existsSync(f.pending)&&fs.fstatSync(descriptor).isDirectory())throw Object.assign(Error('模拟发布后的目录刷新失败'),{code:'EIO'});
+    sync(descriptor);
+  });
+  syncBuiltinESMExports();
+  try{
+    await assert.rejects(withRetainedCodexCaches(f.home,[f.hostHome],'0.1.1',async()=>assert.fail('目录刷新失败后不能执行官方安装')),{code:'EIO'});
+  }finally{t.mock.restoreAll();syncBuiltinESMExports();}
+
+  const pending=readJson<{root:string;caches:{backup:string}[]}>(f.pending);
+  assert.equal(pending.caches.length,1);
+  assert.deepEqual(fileHashes(pending.caches[0]!.backup),before);
+  rmSync(path.join(f.old,'bridge.cjs'));
+  assert.deepEqual(await recoverRetainedCaches(f.home),[f.old]);
+  assert.deepEqual(fileHashes(f.old),before);
+  assert.equal(existsSync(f.pending),false);
+  assert.equal(existsSync(pending.root),false);
 });
 
 test('安装进程在官方删除之后崩溃，下一次 update 能从持久记录恢复原字节',async t=>{

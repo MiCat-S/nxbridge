@@ -2,9 +2,10 @@ import path from 'node:path';
 import { homedir, uptime } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
-import { constants, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { constants, copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import {atomicJson} from '../shared/files.js';
 import {privateDirectory} from './permissions.js';
+import {stateDirectory} from '../storage/state-directory.js';
 import { processAncestors, processIdentity, type ProcessIdentity } from './process.js';
 import { ownedProcessState, stopOwnedProcess, type OwnedIdentity } from './process-stop.js';
 import {BridgeError,describeError} from '../shared/errors.js';
@@ -48,7 +49,7 @@ export async function prepareProcessRegistry(home:string):Promise<void>{
   const root=processRegistryRoot();let work=prepared.get(root);
   if(work&&!existsSync(root)){prepared.delete(root);work=undefined;}
   if(!work){work=privateDirectory(root);prepared.set(root,work);work.catch(()=>prepared.delete(root));}
-  await work;mkdirSync(processRegistryDirectory(home),{recursive:true,mode:0o700});
+  await work;stateDirectory(processRegistryDirectory(home),0o700);
 }
 export async function recordOwnedProcess(home:string,input:Omit<OwnedProcessRecord,'version'|'id'|'home'|'createdAt'|'scope'>):Promise<OwnedProcessRecord>{
   if(input.proof.kind==='spawn'&&input.identity.pid!==process.pid){
@@ -66,7 +67,7 @@ async function persistOwnedProcess(home:string,input:Omit<OwnedProcessRecord,'ve
   const record:OwnedProcessRecord={...input,version:1,id,home:path.resolve(home),createdAt:Date.now(),bootTime:Date.now()-uptime()*1000,...(linuxBootId?{bootId:linuxBootId}:{}),...(process.env.NXBRIDGE_TEST_SCOPE?{scope:process.env.NXBRIDGE_TEST_SCOPE}:{})};
   if(record.posixGroup||record.windowsJob)record.completionFile??=filename(record)+'.done';
                                            
-  if(record.scope){const directory=path.join(processRegistryRoot(),'test-generations');mkdirSync(directory,{recursive:true,mode:0o700});atomicJson(path.join(directory,record.id+'.json'),record);}
+  if(record.scope){const directory=path.join(processRegistryRoot(),'test-generations');stateDirectory(directory,0o700);atomicJson(path.join(directory,record.id+'.json'),record);}
                                                
   atomicJson(filename(record),record);return record;
 }
@@ -77,7 +78,7 @@ export function completeOwnedContainer(record:OwnedProcessRecord):void{
   try{writeFileSync(record.completionFile,'',{flag:'wx',encoding:'utf8'});}catch(error){
     const code=(error as NodeJS.ErrnoException).code;if(code==='EEXIST')return;if(code!=='ENOENT')throw error;
                                             
-    const file=retiredCompletionFile(record);mkdirSync(path.dirname(file),{recursive:true,mode:0o700});
+    const file=retiredCompletionFile(record);stateDirectory(path.dirname(file),0o700);
     try{writeFileSync(file,'',{flag:'wx',encoding:'utf8'});}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
   }
 }
@@ -148,7 +149,7 @@ export function ownedProcesses(home:string):{records:OwnedProcessRecord[];notes:
 export function forgetOwnedProcess(record:OwnedProcessRecord,reason='record-retired'):void{
                                               
   const retired=path.join(processRegistryRoot(),'retired'),file=path.join(retired,record.id+'.json');
-  mkdirSync(retired,{recursive:true,mode:0o700});
+  stateDirectory(retired,0o700);
   const receipt=retiredCompletionFile(record);
   if(record.completionFile)moveCompletion(record.completionFile,receipt);
   if(!existsSync(file))atomicJson(file,{version:1,id:record.id,home:record.home,role:record.role,pid:record.identity.pid,generation:record.identity.startedAt,launchId:record.proof.launchId??null,completionFile:record.completionFile?(existsSync(receipt)?receipt:record.completionFile):undefined,retiredAt:Date.now(),reason});

@@ -46,7 +46,7 @@ export async function recoverRetainedCaches(home:string,dryRun=false):Promise<st
       if(!isDeepStrictEqual(current,cache.files)){
         if(!isDeepStrictEqual(fileHashes(cache.backup),cache.files))fail(cache.backup,'旧缓存副本已改变');
                                                   
-        for(const file of Object.keys(cache.files))if(current[file]===undefined){const destination=path.join(cache.directory,file);mkdirSync(path.dirname(destination),{recursive:true});atomicWriteFile(destination,readFileSync(path.join(cache.backup,file)),true);}
+        for(const file of Object.keys(cache.files))if(current[file]===undefined){const destination=path.join(cache.directory,file);mkdirSync(path.dirname(destination),{recursive:true});atomicWriteFile(destination,readFileSync(path.join(cache.backup,file)),{exclusive:true});}
       }
     }else{
       if(!isDeepStrictEqual(fileHashes(cache.backup),cache.files))fail(cache.backup,'旧缓存副本已改变');
@@ -95,8 +95,14 @@ export async function withRetainedCodexCaches<T>(home:string,hostHomes:string[],
     }
     if(!caches.length)return{value:await work(),restored:[],unretained};
     const identity=await processIdentity(process.pid),record:PendingCaches={owner:managedMarker(home),root,process:{pid:identity.pid,startedAt:identity.startedAt},caches};
-    atomicWriteText(pendingFile(home),JSON.stringify(record,null,2)+'\n',true);published=true;
-  }catch(error){if(!published)removeBackupRoot(home,root);throw error;}
+    atomicWriteText(pendingFile(home),JSON.stringify(record,null,2)+'\n',{exclusive:true});published=true;
+  }catch(error){
+                                        
+    let referenced=published;
+    if(!referenced)try{referenced=JSON.parse(readFileSync(pendingFile(home),'utf8')).root===root;}
+    catch(readError){referenced=(readError as NodeJS.ErrnoException).code!=='ENOENT';}
+    if(!referenced)removeBackupRoot(home,root);throw error;
+  }
   let value:T;
   try{value=await work();}finally{await recoverRetainedCaches(home);}
   return{value,restored:directories,unretained};

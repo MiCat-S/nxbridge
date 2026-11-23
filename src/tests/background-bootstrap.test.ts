@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { bootstrapBackground } from '../hosts/background-bootstrap.js';
 import { recordBackgroundState } from '../hosts/background-state.js';
@@ -24,4 +24,15 @@ test('已独立运行的协调器直接复用，不执行启动能力探针',asy
   const server=await listenBroker(home,async method=>{assert.equal(method,'ping');return{pid:process.pid,runtime:{windowsIndependent:true}};});t.after(()=>server.close());
   assert.match((await bootstrapBackground(home,{preflight:async()=>{probes++;}})).text,/无需重复操作/);assert.equal(probes,0);
   assert.equal(existsSync(path.join(home,'run','broker-startup.db')),false);
+});
+
+test('令牌损坏且本地监听没有归属记录时，引导不会关闭监听或换令牌',async t=>{
+  const home=temporary(t),file=path.join(home,'run','token');await ensureHome(home);
+  const server=await listenBroker(home,async()=>({}));
+  try{
+    writeFileSync(file,'','utf8');
+    await assert.rejects(bootstrapBackground(home,{preflight:async()=>assert.fail('未核验旧监听器时不应启动')}),{code:'ipc_token_repair_blocked'});
+    assert.equal(readFileSync(file,'utf8'),'');
+    assert.equal(existsSync(path.join(home,'run','broker-startup.db')),false);
+  }finally{await server.close();}
 });
