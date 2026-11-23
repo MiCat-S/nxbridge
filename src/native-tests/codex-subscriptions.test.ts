@@ -77,8 +77,12 @@ test('用户观察租约自动释放后仍可唤醒；关闭窗口后原 ID 可�
   await window.request('turn/start',{threadId:first.thread.id,input:[{type:'text',text:'生成持久历史'}]});
   await wait(async()=>requests>0&&(await window.request('thread/read',{threadId:first.thread.id,includeTurns:false})).thread.status.type==='idle','本地轮次没有完成');
   const peer=store.register({...threadRegistration(first.thread,endpoint,first)!,endpoint:{...threadRegistration(first.thread,endpoint,first)!.endpoint,configHome:codexHome}}),other=store.register(registration('claude','subscription-partner',{cwd:root}));store.pair(other.id,peer.id);
+                                     
+  const releaseObservation=()=>wait(async()=>{
+    await (broker as any).releaseIdleCodexSubscriptions();return !adapter.hasSubscription(peer,store.endpoint(peer.id)!);
+  },'原生轮次及观察读取结束后没有释放用户观察租约');
   await adapter.attach(store.peer(peer.id),store.endpoint(peer.id)!);
-  await (broker as any).releaseIdleCodexSubscriptions();
+  await releaseObservation();
   assert.equal((await window.request('thread/read',{threadId:first.thread.id,includeTurns:false})).thread.status.type,'idle');
   assert.equal(store.endpoint(peer.id)?.active,true,'其他订阅仍在，不能结束前台路由');
   const events:any[]=[];adapter.on('native',event=>{if(event.message.params?.threadId===first.thread.id)events.push(event.message);});
@@ -89,11 +93,11 @@ test('用户观察租约自动释放后仍可唤醒；关闭窗口后原 ID 可�
     assert.equal((broker as any).health.get(endpoint,first.thread.id).state,'running');
   }finally{finishResponse();responseHold=undefined;}
   await wait(async()=>events.some(event=>event.method==='item/completed')&&events.some(event=>event.method==='turn/completed')&&(broker as any).health.get(endpoint,first.thread.id)?.state==='ready','恢复运行中观察后未收到正文及轮次结束事件');
-  await (broker as any).releaseIdleCodexSubscriptions();assert.equal(adapter.hasSubscription(peer,store.endpoint(peer.id)!),false);
+  await releaseObservation();assert.equal(adapter.hasSubscription(peer,store.endpoint(peer.id)!),false);
   await adapter.wake(store.peer(peer.id),store.endpoint(peer.id)!);
   await wait(async()=>requests===3&&(await window.request('thread/read',{threadId:first.thread.id,includeTurns:false})).thread.status.type==='idle','释放观察租约后没有正常重新订阅并唤醒');
   assert.equal(adapter.hasSubscription(peer,store.endpoint(peer.id)!),true);
-  await (broker as any).releaseIdleCodexSubscriptions();
+  await releaseObservation();
   assert.equal(adapter.hasSubscription(peer,store.endpoint(peer.id)!),false);
                                                    
   const retained=await connectAppServer(endpoint,config,undefined,home);windows.push(retained);

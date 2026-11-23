@@ -175,6 +175,24 @@ test('用户轮次的全局忙碌通知恢复观察，补回轮次健康和切�
   assert.equal((broker as any).health.get(endpoint.address,x.sessionId).state,'needsHuman');
 });
 
+for(const [state,completed] of [['busy',false],['needsHuman',false],['busy',true]] as const)test('旧观察读取期间出现新一轮活动后补读最新轮次：'+state+'/'+completed,async t=>{
+  const {store,broker,x,c,codex}=fixture(t),endpoint=store.endpoint(x.id)!,pair=store.pair(c.id,x.id),message=store.accept(pair,c,'补回新轮次的回执','observer-new-turn');
+  store.transition(message.id,'runtimeQueued','原生已接受');
+  let observations=0,reads=0,finish!:()=>void,entered!:()=>void;
+  const pending=new Promise<void>(resolve=>finish=resolve),reading=new Promise<void>(resolve=>entered=resolve);
+  codex.observeActive=async()=>{observations++;};
+  codex.injectionState=async()=>{
+    if(++reads===1){entered();await pending;return{thread:{id:x.sessionId!,cwd:x.cwd,status:{type:'idle'},turns:[{id:'old-turn',status:'completed',items:[]}]},history:{status:'supported',receipts:[],calls:[]}} as any;}
+    return{thread:{id:x.sessionId!,cwd:x.cwd,status:{type:completed?'idle':'active'},turns:[{id:'new-turn',status:completed?'completed':'inProgress',items:[{id:'new-receipt',type:'functionCallOutput',namespace:'claude',name:'receive_messages',output:JSON.stringify({messages:[{message_id:message.id}]})}]}]},history:{status:'supported',receipts:[],calls:[]}} as any;
+  };
+  codex.emit('state',x.sessionId,'busy',endpoint.address);await reading;
+  codex.emit('state',x.sessionId,'ready',endpoint.address);codex.emit('state',x.sessionId,state,endpoint.address);
+  if(completed)codex.emit('state',x.sessionId,'ready',endpoint.address);
+  finish();await Promise.all((broker as any).codexObservationChecks.values());
+  assert.equal(observations,2);assert.equal(reads,2);
+  assert.equal((broker as any).health.get(endpoint.address,x.sessionId).turnId,'new-turn');assert.equal(store.message(message.id).state,'contextObserved');
+});
+
 test('从未运行的原生线程明确未加载时关闭路由，不把其他读取失败当作卸载',async t=>{
   const adapter=new CodexAdapter(DEFAULT_CONFIG,temporary(t)),store=new Store(':memory:');t.after(()=>{adapter.close();store.close();});
   const peer=store.register(registration('codex','empty-thread')),endpoint=store.endpoint(peer.id)!;let unloaded=true;

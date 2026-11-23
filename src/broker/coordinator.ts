@@ -143,6 +143,7 @@ export class Broker {
   private stopped=false;
   private codexSubscriptionChecks=new Map<string,Promise<unknown>>();
   private codexObservationChecks=new Map<string,Promise<void>>();
+  private codexObservationRefresh=new Set<string>();
   private codexForeground:CodexForegroundWindows;
   private readonly selectionResolver:SelectionResolver;
   private pairChanges=0;
@@ -356,9 +357,10 @@ export class Broker {
     on(adapters.codex,'sessionVerificationFailed',({memberId,sessionId,runtimeId,error})=>{const peer=this.store.getPeer(memberId);if(peer&&peer.owner==='nxbridge'&&peer.sessionId===sessionId&&this.store.pairFor(peer.id)&&hostingRecord(this.store,peer)?.verificationRuntimeId===runtimeId)writeHosting(this.store,peer,{verificationError:error});});
     on(adapters.codex,'state',(id:string,state:PeerState,address?:string)=>{
       if(state==='offline'&&address){const runtime=runtimeFor(this.home,{endpoint:address})?.value;if(runtime?.peerId)clearManagedConflict(this.store,runtime.peerId,runtime.id,id);}
-      const p=this.runtimePeer(id,address);if(p&&this.enabled(p.id)&&(p.state!=='paused'||p.kind==='subagent'))this.store.updatePeer(p.id,{state});
+      const p=this.runtimePeer(id,address),newActivity=p&&!['busy','needsHuman'].includes(p.state);
+      if(p&&this.enabled(p.id)&&(p.state!=='paused'||p.kind==='subagent'))this.store.updatePeer(p.id,{state});
       if(p?.kind==='subagent'&&state==='offline')for(const endpoint of this.store.endpoints(p.id))if(endpoint.mode==='app-server'&&endpoint.address===address)this.store.deactivate(p.id,endpoint.epoch);
-      if(p&&['busy','needsHuman'].includes(state))return this.observeActiveCodex(this.store.peer(p.id));
+      if(p&&['busy','needsHuman'].includes(state))return this.observeActiveCodex(this.store.peer(p.id),newActivity);
     });
     on(adapters.codex,'permission',(id:string,permission:Peer['permission'],address?:string)=>{const p=this.runtimePeer(id,address);if(p&&this.enabled(p.id))this.store.updatePeer(p.id,{permission});});
     on(adapters.codex,'profile',(id:string,input:RegisterInput,address?:string)=>{const p=this.runtimePeer(id,address);if(p&&this.enabled(p.id)){const profile=runtimeProfile(p,input);this.profiles.observed(this.store.updatePeer(p.id,{model:profile.model,effort:profile.effort}),input);}});
@@ -392,20 +394,27 @@ export class Broker {
     const matches=this.store.peers().filter(p=>p.host==='codex'&&p.sessionId===sessionId&&!this.store.bindings.current(p.id)&&(!address||this.store.endpoints(p.id).some(e=>e.address===address)));
     return matches.length===1?matches[0]:undefined;
   }
-  private observeActiveCodex(peer:Peer):Promise<void>{
+  private observeActiveCodex(peer:Peer,refresh=false):Promise<void>{
     const endpoint=this.store.endpoint(peer.id);
     if(this.stopped||!codexUserWindow(peer)||!this.enabled(peer.id)||hostingGate(this.store,peer)||!['busy','needsHuman'].includes(peer.state)||!peer.sessionId||endpoint?.mode!=='app-server'||endpoint.daemon)return Promise.resolve();
-    const key=endpoint.address+'|'+peer.sessionId,pending=this.codexObservationChecks.get(key);if(pending)return pending;
+    const key=endpoint.address+'|'+peer.sessionId,pending=this.codexObservationChecks.get(key);
+    if(pending){if(refresh)this.codexObservationRefresh.add(key);return pending;}
     const current=()=>!this.stopped&&this.enabled(peer.id)&&codexUserWindow(this.store.peer(peer.id))&&this.store.peer(peer.id).sessionId===peer.sessionId&&this.store.endpoint(peer.id)?.epoch===endpoint.epoch;
+    let observed=peer;
     const work=(async()=>{
-                                              
-      await this.adapters.codex.observeActive(peer,endpoint);if(!current())return;
-      const revision=this.health.revision(endpoint.address,peer.sessionId!),snapshot=await this.adapters.codex.injectionState(peer,endpoint);if(!current())return;
-      this.health.read(endpoint.address,snapshot.thread,revision);
-      const turn=snapshot.thread.turns?.at(-1);if(turn?.id)this.codexDirect.continued(peer.id,turn.id);
-      const receipts=[...snapshot.history.receipts,...(snapshot.thread.turns??[]).flatMap(turn=>(turn.items??[]).flatMap((item:any)=>codexContextReceipts(item,turn.id)))];
-      for(const receipt of receipts)this.observeCodexContext(peer,receipt,'恢复运行中观察');
-    })().finally(()=>{if(this.codexObservationChecks.get(key)===work)this.codexObservationChecks.delete(key);});
+                                      
+      do{
+        this.codexObservationRefresh.delete(key);
+                                                
+        await this.adapters.codex.observeActive(observed,endpoint);if(!current())return;
+        const revision=this.health.revision(endpoint.address,peer.sessionId!),snapshot=await this.adapters.codex.injectionState(peer,endpoint);if(!current())return;
+        this.health.read(endpoint.address,snapshot.thread,revision);
+        const turn=snapshot.thread.turns?.at(-1);if(turn?.id)this.codexDirect.continued(peer.id,turn.id);
+        const receipts=[...snapshot.history.receipts,...(snapshot.thread.turns??[]).flatMap(turn=>(turn.items??[]).flatMap((item:any)=>codexContextReceipts(item,turn.id)))];
+        for(const receipt of receipts)this.observeCodexContext(peer,receipt,'恢复运行中观察');
+        observed=this.store.peer(peer.id);
+      }while(this.codexObservationRefresh.has(key)&&['busy','needsHuman','ready'].includes(observed.state)&&!hostingGate(this.store,observed));
+    })().finally(()=>{if(this.codexObservationChecks.get(key)===work){this.codexObservationChecks.delete(key);this.codexObservationRefresh.delete(key);}});
     this.codexObservationChecks.set(key,work);return work;
   }
   private async releaseIdleCodexSubscriptions(address?:string,legacySessionId?:string,wait=true):Promise<void>{
