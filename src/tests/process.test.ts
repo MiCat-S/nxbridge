@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { nativeDescendant, processAncestors, processIdentity, selectNativeHost, codexDedicatedEndpointArguments, probeProcesses, processProbeStatus } from '../process/process.js';
+import { nativeDescendant, processAncestors, processIdentity, selectNativeHost, codexDedicatedEndpointArguments, probeProcesses, processProbeStatus, codexArguments, readPsArguments } from '../process/process.js';
 import { temporary } from './support/temporary.js';
 
 test('同名辅助后代不阻止真正宿主登记，独立的宿主分支仍拒绝猜选',()=>{
@@ -18,6 +18,26 @@ test('专用端点选择按原生角色与精确参数，支持程序别名且�
   assert.ok(codexDedicatedEndpointArguments(['/opt/custom-runtime','app-server','--listen',address],address));
   assert.ok(codexDedicatedEndpointArguments(['codex','-c','key=value','app-server','--listen='+address],address));
   for(const args of [['codex','app-server','--listen',address+'-other'],['node','wrapper.js','app-server','--listen',address],['codex','exec','app-server','--listen',address]])assert.equal(codexDedicatedEndpointArguments(args,address),false);
+});
+
+test('BSD 参数读取把已退出的候选进程归为缺失，保留查询故障和代次核验',async()=>{
+  const found={pid:123,parentPid:1,name:'codex',startedAt:'Mon Nov 23 03:24:30 2026',image:'/opt/codex'},stdout=found.startedAt+' '+found.image+' app-server --listen unix:///tmp/launch.sock\n';
+  assert.deepEqual(await readPsArguments(found,1500,async(command,args,options)=>{
+    assert.equal(command,process.platform==='darwin'?'/bin/ps':'ps');assert.deepEqual(args,['-ww','-p','123','-o','lstart=,args=']);assert.equal(options.timeout,1500);return{stdout};
+  }),['/opt/codex','app-server','--listen','unix:///tmp/launch.sock']);
+  const missing={code:1,stdout:'',stderr:'',killed:false,signal:null};
+  await assert.rejects(readPsArguments(found,1500,async()=>{throw missing;}),{code:'process_missing'});
+  for(const failure of [{...missing,stderr:'ps: denied'},{...missing,stdout:'unexpected'},{...missing,code:2},{...missing,killed:true},{...missing,signal:'SIGTERM'}])await assert.rejects(readPsArguments(found,1500,async()=>{throw failure;}),error=>error===failure);
+  for(const value of ['',stdout.replace('03:24:30','03:24:31')])await assert.rejects(readPsArguments(found,1500,async()=>({stdout:value})),{code:'process_identity_unknown'});
+});
+
+test('Darwin 原生参数查询在子进程退出后报告缺失',{skip:process.platform!=='darwin'},async()=>{
+  const child=spawn(process.execPath,['-e','process.send("ready");setInterval(()=>{},1000)'],{stdio:['ignore','ignore','ignore','ipc']}),closed=new Promise<void>(resolve=>child.once('close',()=>resolve()));
+  try{
+    await new Promise<void>((resolve,reject)=>{child.once('message',()=>resolve());child.once('error',reject);});
+    const identity=await processIdentity(child.pid!);child.kill();await closed;
+    await assert.rejects(codexArguments(identity),{code:'process_missing'});
+  }finally{if(child.exitCode===null&&child.signalCode===null)child.kill();await closed;}
 });
 
 test('同一轮多组健康探测合并查询，分别保留正确和错误代次结果',async()=>{

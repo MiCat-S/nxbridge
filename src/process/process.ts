@@ -283,12 +283,20 @@ export async function codexArguments(found:ProcessIdentity,timeout=10000):Promis
   if(process.platform==='win32'){
     args=windowsArguments(await readWindowsProcessArguments(found,remainingTime(deadline,timeout)));
   }else if(process.platform==='linux')args=readFileSync('/proc/'+found.pid+'/cmdline','utf8').split('\0').filter(Boolean);
-  else{
-    const {stdout}=await execute(ps(),['-ww','-p',String(found.pid),'-o','lstart=,args='],{timeout:remainingTime(deadline,2000),env:psEnvironment(),maxBuffer:16*1024*1024});
-    return parsePsArguments(stdout,found);
-  }
+  else return readPsArguments(found,remainingTime(deadline,2000));
   if(!args.length||process.platform!=='win32'&&(await processAncestors(found.pid,1,remainingTime(deadline,2000)))[0]?.startedAt!==found.startedAt)throw new BridgeError('process_identity_unknown','原生 Codex 身份在读取期间改变。');
   return args;
+}
+export async function readPsArguments(found:ProcessIdentity,timeout=2000,run:(command:string,args:string[],options:{timeout:number;env:NodeJS.ProcessEnv;maxBuffer:number})=>Promise<{stdout:string}>=execute):Promise<string[]>{
+  let stdout:string;
+  try{({stdout}=await run(ps(),['-ww','-p',String(found.pid),'-o','lstart=,args='],{timeout,env:psEnvironment(),maxBuffer:16*1024*1024}));}
+  catch(error){
+    const failure=error as {code?:unknown;stdout?:unknown;stderr?:unknown;killed?:boolean;signal?:unknown};
+                                                       
+    if(failure.code===1&&failure.stdout===''&&failure.stderr===''&&!failure.killed&&!failure.signal)throw new BridgeError('process_missing','会话进程已经结束。');
+    throw error;
+  }
+  return parsePsArguments(stdout,found);
 }
 export function parsePsArguments(stdout:string,found:Pick<ProcessIdentity,'startedAt'|'image'>):string[]{
   const match=/^\s*([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d+\s+\d+:\d+:\d+\s+\d{4})\s+([\s\S]+?)\s*$/.exec(stdout);
