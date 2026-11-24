@@ -96,7 +96,7 @@ nxbridge setup --prepare-only
 
 - 用 `--from` 指定新构建的 `publish/` 目录。
 - 不带 `--from` 时沿用上次的安装来源；来源已经不在的话，就用私有目录里已安装的版本做修复。
-- 推荐由新版本自己的安装程序执行：`node <新 publish 目录>/nxbridge.mjs update --from <新 publish 目录>`。
+- `setup` / `update` 一开始就把命令连同原参数交给要安装的版本执行（续装时用上次选定的版本），所以从已装好的 `nxbridge update` 发起，也是由新版本自己的安装程序完成，一次就生效。这个行为从 0.1.2 起才有；从 0.1.1 升级请执行 `node <新 publish 目录>/nxbridge.mjs update --from <新 publish 目录>`。
 
 ### `nxbridge` 命令的位置
 

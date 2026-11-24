@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { VERSION } from '../version.js';
 import assert from 'node:assert/strict';
 import { reloadAction, recordReloadAttempt, modStaleNotice, MOD_RELOAD_STABLE_MS, MOD_RELOAD_ATTEMPT_MS, MOD_STALE_NOTICE_MS, MOD_RELOAD_SETTLE_MS } from '../integration/mod/mod-reload.js';
 import { MOD_REVISION } from '../mod-revision.js';
@@ -43,7 +44,7 @@ test('后台：旧插件窗口过期时只叫醒一次（同一事实只提交�
   for(const mod of ['old','new'] as const){
     const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),health=f.broker.deliveryHealth;
     f.store.saveEndpoint({...f.store.endpoint(f.c.id)!,questionSupport:true});
-    const beat=()=>f.broker.pairAnomalies.integration(f.store.peer(f.c.id),{mod:true,modVersion:'0.1.1',modRevision:'f'.repeat(16)});
+    const beat=()=>f.broker.pairAnomalies.integration(f.store.peer(f.c.id),{mod:true,modVersion:VERSION,modRevision:'f'.repeat(16)});
     beat();t.mock.timers.tick(130000);beat();f.broker.pairAnomalies.observe(pair,f.store.peer(f.c.id));
     const stale=f.broker.pairAnomalies.issues(f.c.id).find(issue=>issue.kind==='mod_stale')!;assert.ok(stale);
     t.mock.timers.tick(MOD_RELOAD_STABLE_MS);beat();
@@ -75,7 +76,7 @@ test('同一窗口新旧插件环境短暂并存：当前修订号报到后 2 �
   t.mock.timers.enable({apis:['Date'],now:1000000});
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id);
   f.store.saveEndpoint({...f.store.endpoint(f.c.id)!,questionSupport:true});
-  const report=(revision:string)=>f.broker.pairAnomalies.integration(f.store.peer(f.c.id),{mod:true,modVersion:'0.1.1',modRevision:revision});
+  const report=(revision:string)=>f.broker.pairAnomalies.integration(f.store.peer(f.c.id),{mod:true,modVersion:VERSION,modRevision:revision});
   const stale=()=>{f.broker.pairAnomalies.observe(pair,f.store.peer(f.c.id));return f.broker.pairAnomalies.issues(f.c.id).some(issue=>issue.kind==='mod_stale');};
   report(MOD_REVISION);t.mock.timers.tick(130000);report(MOD_REVISION);assert.equal(stale(),false);
   for(let i=0;i<6;i++){t.mock.timers.tick(7500);report('f'.repeat(16));assert.equal(stale(),false,'旧环境心跳不降级');t.mock.timers.tick(7500);report(MOD_REVISION);assert.equal(stale(),false);}

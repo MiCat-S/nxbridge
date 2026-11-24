@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { VERSION } from '../version.js';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { Store } from '../storage/store.js';
@@ -69,7 +70,7 @@ test('未加载回复协议的旧成员明确告警，已验证的新 MCP 或 Mo
   assert.equal(f.broker.deliveryHealth.hasPending(pair.id,f.c.id),false);
   const c=f.store.register(registration('claude','old-mod',{replyContract:undefined}));
   for(const modVersion of [undefined,'0.1.0','unknown']){f.broker.pairAnomalies.integration(c,{mod:true,modVersion});assert.equal(f.store.setting('replyContract:'+c.id),undefined);}
-  f.broker.pairAnomalies.integration(c,{mod:true,modVersion:'0.1.1'});assert.ok(f.store.setting('replyContract:'+c.id));
+  f.broker.pairAnomalies.integration(c,{mod:true,modVersion:VERSION});assert.ok(f.store.setting('replyContract:'+c.id));
 });
 
 test('升级后的空闲检测不重复历史积压，启用后的真实未回复仍告警并可由关联回复撤销',async t=>{

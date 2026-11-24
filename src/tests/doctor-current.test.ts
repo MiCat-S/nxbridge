@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { VERSION } from '../version.js';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { writeFileSync } from 'node:fs';
@@ -32,7 +33,7 @@ test('只读诊断仅向本配对配置查询原生 hooks，不写信任、不�
 });
 
 test('可自行处理的异常给出准确 Bash 命令与边界；信任和用户窗口不指向自动重启',t=>{
-  const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),base:PairObservation={pair,peer:{...f.x,owner:'nxbridge'},endpoint:f.store.endpoint(f.x.id),now:2000000,messages:[],transitioning:false,questionPending:false,integration:{scope:'test',since:1000000,turnsWithoutHook:0},version:'0.1.1',home:path.resolve("/AI's home")};
+  const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),base:PairObservation={pair,peer:{...f.x,owner:'nxbridge'},endpoint:f.store.endpoint(f.x.id),now:2000000,messages:[],transitioning:false,questionPending:false,integration:{scope:'test',since:1000000,turnsWithoutHook:0},version:VERSION,home:path.resolve("/AI's home")};
   const diagnostic=agentCommand(['doctor','--current'],base.home);assert.match(diagnostic,/AI'"'"'s home/);assert.match(diagnostic,/'doctor' '--current'$/);
   for(const integration of [{hookError:'failed'},{turnsWithoutHook:2},{wakeQueueError:'unreadable'}])assert.ok(pairIssues({...base,integration:{...base.integration,...integration}}).some(issue=>issue.message.includes(diagnostic)));
   const managed=pairIssues({...base,replyContractActive:false}).find(issue=>issue.kind==='contract_inactive')!;assert.match(managed.message,/'restart' 'codex' '--partner'/);assert.match(managed.message,/no polling/);

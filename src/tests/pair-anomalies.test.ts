@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { VERSION } from '../version.js';
 import assert from 'node:assert/strict';
 import { pairIssues, MOD_STALE_GRACE_MS, type PairObservation } from '../broker/pairing/pair-anomalies.js';
 import { SILENCE_MS } from '../broker/health/turn-health.js';
@@ -22,7 +23,7 @@ test('单次或被成功 hook 清除的超时不冒充信任错误，连续三�
 
 test('逐类异常有故障与正常对照：投递、上下文、Mod、hooks、停滞、长工具和无观测',t=>{
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),now=2000000;
-  const base:PairObservation={pair,peer:{...f.c,state:'busy',stateSince:now,activityAt:now},endpoint:{...f.store.endpoint(f.c.id)!,questionSupport:true},now,messages:[],transitioning:false,questionPending:false,integration:{scope:'test',since:now-120001,turnsWithoutHook:0,modVersion:'0.1.1',modSeenAt:now},version:'0.1.1'};
+  const base:PairObservation={pair,peer:{...f.c,state:'busy',stateSince:now,activityAt:now},endpoint:{...f.store.endpoint(f.c.id)!,questionSupport:true},now,messages:[],transitioning:false,questionPending:false,integration:{scope:'test',since:now-120001,turnsWithoutHook:0,modVersion:VERSION,modSeenAt:now},version:VERSION};
   assert.deepEqual(pairIssues(base),[]);
   for(const state of ['accepted','sending','runtimeQueued','held','unknown','refused','expired'] as const){
     const message=f.store.accept(pair,f.x,'任务',state),value={...base,peer:{...base.peer,state:'ready' as const},messages:[{...message,state,updatedAt:now-120001}]};
@@ -74,7 +75,7 @@ test('原生 hooks 证据按成员和上下文计数，恢复清除问题；旧 
                                                
   const ownNotice=monitored.notices.find((notice:any)=>/Claude Mod is outdated \(loaded 0\.1\.0[\s\S]*Call reload_plugins once now/.test(notice.message));assert.ok(ownNotice,'旧 Mod 已有的 monitor 入口实际返回自身异常');
   f.broker.deliveryHealth.outcome(pair.id,f.c.id,ownNotice.id,'submitted');
-  f.broker.pairAnomalies.integration(f.c,{mod:true,modVersion:'0.1.1',modRevision:MOD_REVISION});f.broker.pairAnomalies.observe(pair,f.c);assert.deepEqual(f.broker.pairAnomalies.issues(f.c.id),[]);
+  f.broker.pairAnomalies.integration(f.c,{mod:true,modVersion:VERSION,modRevision:MOD_REVISION});f.broker.pairAnomalies.observe(pair,f.c);assert.deepEqual(f.broker.pairAnomalies.issues(f.c.id),[]);
   assert.equal(f.broker.deliveryHealth.hasPending(pair.id,f.c.id),false);assert.equal(f.broker.deliveryHealth.hasPending(pair.id,f.x.id),false);
   f.store.updatePeer(f.x.id,{sessionId:'new'});assert.equal(f.broker.pairAnomalies.evidence(f.store.peer(f.x.id)).turnsWithoutHook,0);
 });
@@ -126,7 +127,7 @@ test('以失败结束、没有 hook 的轮次不算 hooks 失效：时间分支�
   emit('turn/started','done',{turn:{id:'done'}});emit('turn/completed','done',{turn:{id:'done',status:'completed'}});
   t.mock.timers.tick(120001);assert.ok(missing(),'正常结束却仍没有任何 hook：照常告警');
                                      
-  const base:PairObservation={pair,peer:{...f.x,state:'ready'},endpoint:f.store.endpoint(f.x.id),now:Date.now(),messages:[],transitioning:false,questionPending:false,integration:{scope:'test',since:0,turnsWithoutHook:1,lastTurnAt:Date.now()-120001,lastTurnId:'x',lastHookAt:Date.now()-200000,lastHookTurnId:'w'},version:'0.1.1'};
+  const base:PairObservation={pair,peer:{...f.x,state:'ready'},endpoint:f.store.endpoint(f.x.id),now:Date.now(),messages:[],transitioning:false,questionPending:false,integration:{scope:'test',since:0,turnsWithoutHook:1,lastTurnAt:Date.now()-120001,lastTurnId:'x',lastHookAt:Date.now()-200000,lastHookTurnId:'w'},version:VERSION};
   assert.ok(pairIssues(base).some(issue=>issue.kind==='hooks_missing'));
   assert.equal(pairIssues({...base,health:{turnId:'x',lastProgressAt:0,lastEventAt:0,state:'failed',tools:[]}}).some(issue=>issue.kind==='hooks_missing'),false);
 });
@@ -238,7 +239,7 @@ test('对方长时间没有进展：旧的沉默遇上新的等待不立即提�
 
 test('拿不到最新一步的进度证据时只说无法观测，不当作没有进展',t=>{
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),now=2000000;
-  const base:PairObservation={pair,peer:{...f.x,state:'busy',stateSince:now-700000,activityAt:now-700000},endpoint:{...f.store.endpoint(f.x.id)!,mode:'embedded'},now,messages:[],transitioning:false,questionPending:false,integration:{scope:'test',since:now-120001,turnsWithoutHook:0},version:'0.1.1'};
+  const base:PairObservation={pair,peer:{...f.x,state:'busy',stateSince:now-700000,activityAt:now-700000},endpoint:{...f.store.endpoint(f.x.id)!,mode:'embedded'},now,messages:[],transitioning:false,questionPending:false,integration:{scope:'test',since:now-120001,turnsWithoutHook:0},version:VERSION};
   const health={turnId:'t',lastProgressAt:now-660000,lastEventAt:now,state:'running' as const,tools:[]};
   const kinds=(value:any)=>pairIssues({...base,health:value}).map(issue=>issue.kind);
   assert.ok(kinds(health).includes('turn_silent'),'有进度证据时照旧判定没有进展');
@@ -283,7 +284,7 @@ test('失败方又忙起来、有待答问题或被用户暂停时不叫醒；Cl
     f.store.updatePeer(f.x.id,{state});f.broker.pairAnomalies.observe(pair,f.store.peer(f.x.id),failed);t.mock.timers.tick(31000);f.broker.pairAnomalies.observe(pair,f.store.peer(f.x.id),failed);
     assert.equal(f.broker.deliveryHealth.peek(pair.id,f.c.id).length,0,state);
   }
-  const base:PairObservation={pair,peer:{...f.x,state:'ready'},endpoint:f.store.endpoint(f.x.id),now:Date.now(),messages:[],transitioning:false,questionPending:true,integration:{scope:'test',since:0,turnsWithoutHook:0},version:'0.1.1',health:failed};
+  const base:PairObservation={pair,peer:{...f.x,state:'ready'},endpoint:f.store.endpoint(f.x.id),now:Date.now(),messages:[],transitioning:false,questionPending:true,integration:{scope:'test',since:0,turnsWithoutHook:0},version:VERSION,health:failed};
   assert.equal(pairIssues(base).some(issue=>issue.kind==='turn_failed'),false,'有待答问题：回答会开启新一轮');
                                                         
   f.store.updatePeer(f.c.id,{state:'ready'});
