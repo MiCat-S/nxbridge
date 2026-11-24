@@ -51,7 +51,7 @@ test('恢复安装优先运行 pendingSetup 的版本，不跳到新的 --from �
 
 test('真实目标版本不重复转交，dry-run 不建立私有目录；来源消失时仍进入修复预检',async t=>{
   const directory=temporary(t),home=path.join(directory,'home'),source=sourceAt(directory,'source');
-  const args=['update','--dry-run','--codex-command',path.join(directory,'missing-codex')];
+  const args=['update','--dry-run','--codex-command',path.join(directory,'missing-codex'),'--claude-command',process.execPath];
   await assert.rejects(run(CLI_PATH,home,[...args,'--from',source]),/setup 需要运行 codex/);
   assert.equal(existsSync(home),false);
   const candidate=await stageRuntime(home,source);candidate.source=path.join(directory,'gone');
