@@ -49,7 +49,11 @@ export async function dispatchCommand(command:string|undefined,args:string[]):Pr
     case 'update':{
       const {setupArguments,SETUP_HELP}=await import('../install/setup-arguments.js');
       const parsed=setupArguments(args);
-      if(parsed.help)process.stdout.write(SETUP_HELP);else {const {setup}=await import('../install/setup.js');print(await setup(parsed.options));}
+      if(parsed.help)process.stdout.write(SETUP_HELP);else {
+        const {handoffSetup}=await import('../install/setup-handoff.js');
+        if(await handoffSetup(command,args,parsed.options!))break;
+        const {setup}=await import('../install/setup.js');print(await setup(parsed.options));
+      }
       break;
     }
     case 'uninstall':{
