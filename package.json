@@ -1,6 +1,6 @@
 {
   "name": "nxbridge",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Claude Code 与 Codex CLI 的本地平等搭档通信",
   "type": "module",
   "engines": {

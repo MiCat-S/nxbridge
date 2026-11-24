@@ -1,6 +1,6 @@
 {
   "name": "nxbridge",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "与 Claude Code 平等搭档进行异步通信",
   "mcpServers": "./.mcp.json",
   "hooks": "./hooks/hooks.json",
