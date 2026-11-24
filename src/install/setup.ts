@@ -116,7 +116,6 @@ export async function preparePlugins(home=bridgeHome(),options:{packageRoot?:str
     files.set('runtime.json',json({node:process.execPath,entry:options.launcher??CLI_PATH,home,...(options.launcher?{launcher:options.launcher}:{})}));
     const mcp=JSON.parse(files.get('.mcp.json')!.toString('utf8'));
     const server=mcp.mcpServers[host==='codex'?'claude':'codex'];
-    server.command=process.execPath;
     server.args[0]=path.join(target,'bridge.cjs');
     files.set('.mcp.json',json(mcp));
     const previous=existsSync(target)?fileHashes(target):{};

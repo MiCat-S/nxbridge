@@ -20,6 +20,14 @@ test('重复准备保留稳定入口及未变文件，清理废弃文件而不�
   await preparePlugins(f.home);assert.equal(statSync(bridge).mtimeMs,before);assert.equal(existsSync(path.join(target,'obsolete.js')),false);assert.ok(existsSync(path.join(target,'.mcp.json')));
 });
 
+test('MCP 入口用 PATH 中的 node，不写死会随 Node 升级失效的安装路径',async t=>{
+  const f=fixture(t),root=await preparePlugins(f.home);
+  for(const [host,server] of [['codex','claude'],['claude','codex']] as const){
+    const target=path.join(root,'plugins',host),entry=readJson<{mcpServers:Record<string,{command:string;args:string[]}>}>(path.join(target,'.mcp.json')).mcpServers[server]!;
+    assert.equal(entry.command,'node');assert.equal(entry.args[0],path.join(target,'bridge.cjs'));
+  }
+});
+
 test('嵌套来源清单在安装与卸载中使用同一归属判定',async t=>{
   const f=fixture(t),run=f.services.run!;
   f.services.run=async(host,args)=>{
