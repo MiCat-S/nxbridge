@@ -8,6 +8,7 @@ import {ownedProcessState,stopOwnedProcess} from '../process/process-stop.js';
 import {BridgeError} from '../shared/errors.js';
 import {ipcAddress,ownedSocketDirectory} from '../shared/local-paths.js';
 import {atomicWriteText} from '../storage/atomic-file.js';
+import {delay} from '../shared/time.js';
 import {ipcToken,ipcTokenFile} from './token.js';
 
 function invalidToken(home:string):boolean{
@@ -72,8 +73,14 @@ export async function repairIpcToken(home:string,startup:StartupReservation):Pro
   await assertNoClaudeWorker(home);
   const broker=await repairableBroker(home);
   await startup.assertCurrent();
+  const stoppingDeadline=performance.now()+15000;
   if(broker)await stopOwnedProcess(broker,{timeout:15000});
-  if(await listening(ipcAddress(home)))throw new BridgeError('ipc_token_repair_blocked','旧协调器仍在监听，本地 IPC 令牌没有更换。请重启电脑后，再运行同样的命令。');
+                                                 
+  while(await listening(ipcAddress(home))){
+    const remaining=stoppingDeadline-performance.now();
+    if(!broker||remaining<=0)throw new BridgeError('ipc_token_repair_blocked','旧协调器仍在监听，本地 IPC 令牌没有更换。请重启电脑后，再运行同样的命令。');
+    await delay(Math.min(50,remaining));
+  }
   await startup.assertCurrent();
                                                     
   await assertNoClaudeWorker(home);
