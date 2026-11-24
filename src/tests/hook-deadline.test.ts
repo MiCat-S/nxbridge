@@ -1,7 +1,8 @@
+import { copyNodeBinary } from './support/node-binary.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { copyFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { once } from 'node:events';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -17,7 +18,7 @@ import {BridgeError} from '../shared/errors.js';
 import {DEFAULT_CONFIG} from '../config/defaults.js';
 
 test('Windows hook 冷启动分段计时，空取件不额外探测宿主进程',{skip:process.platform!=='win32',timeout:60000},async t=>{
-  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),binary=path.join(root,'codex.exe');await ensureHome(home);copyFileSync(process.execPath,binary);
+  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),binary=path.join(root,'codex.exe');await ensureHome(home);copyNodeBinary(binary);
   const store=new Store(':memory:'),codex=new FakeAdapter(),claude=new FakeAdapter(),broker=new Broker(store,{...DEFAULT_CONFIG,implicit:'never'},{codex,claude} as any,home),f={store,broker,codex,claude};
   const partner=store.register(registration('claude','deadline-partner',{cwd:root}));
   let probes=0;for(const adapter of [f.codex,f.claude])adapter.probe=async()=>{probes++;return{state:'reachable',reasons:[],checked_at:Date.now()};};
@@ -40,7 +41,7 @@ test('Windows hook 冷启动分段计时，空取件不额外探测宿主进程'
 });
 
 test('协调器不在线时，原生中断和退出在三秒内返回且不启动服务',{timeout:15000},async t=>{
-  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),binary=path.join(root,process.platform==='win32'?'codex.exe':'codex');await ensureHome(home);copyFileSync(process.execPath,binary);
+  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),binary=path.join(root,process.platform==='win32'?'codex.exe':'codex');await ensureHome(home);copyNodeBinary(binary);
   const entry=path.join(PACKAGE_ROOT,'publish/hook-entry.mjs'),script=`const{spawn}=require('node:child_process');process.on('message',event=>{const began=performance.now(),child=spawn(${JSON.stringify(process.execPath)},[${JSON.stringify(entry)},'hook','--host','codex'],{env:process.env,windowsHide:true,stdio:['pipe','pipe','pipe']});let out='',err='';child.stdout.on('data',data=>out+=data);child.stderr.on('data',data=>err+=data);child.on('close',code=>process.send({code,out,err,wallMs:performance.now()-began}));child.stdin.end(JSON.stringify({hook_event_name:event,session_id:'offline-short'}));});process.send('ready');`;
   const parent=spawn(binary,['-e',script],{env:{...process.env,NXBRIDGE_HOME:home,CODEX_HOME:path.join(root,'codex')},windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),ended=once(parent,'exit');
   t.after(async()=>{if(parent.exitCode===null&&parent.signalCode===null)parent.kill();await ended;await temp.cleanup();});await once(parent,'message');

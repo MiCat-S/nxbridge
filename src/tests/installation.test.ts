@@ -1,3 +1,4 @@
+import { copyNodeBinary } from './support/node-binary.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
@@ -89,7 +90,7 @@ test('相同 Node 的安装入口及两端插件不创建额外父进程，新�
 
 test('插件经安装入口切换 Node 时仍继承首个进程的 hook 预算起点',async t=>{
   const directory=temporary(t),home=path.join(directory,'home'),entry=path.join(directory,'hook-entry.mjs'),alternate=path.join(directory,process.platform==='win32'?'alternate-node.exe':'alternate-node');
-  const fs=await import('node:fs');try{fs.linkSync(process.execPath,alternate);}catch{fs.copyFileSync(process.execPath,alternate);}
+  copyNodeBinary(alternate);
   writeFileSync(entry,'console.log(JSON.stringify({started:Number(process.env.NXBRIDGE_HOOK_STARTED_AT),current:performance.timeOrigin}));','utf8');
   installShim(planShim(home,{node:alternate,entry,pathValue:''}));const plugin=path.join(directory,'plugin');mkdirSync(plugin);cpSync(path.join(PACKAGE_ROOT,'plugins','codex','bridge.cjs'),path.join(plugin,'bridge.cjs'));
   writeFileSync(path.join(plugin,'runtime.json'),JSON.stringify({node:alternate,entry,home,launcher:path.join(home,'bin','nxbridge.cjs')}),'utf8');
@@ -112,7 +113,7 @@ test('安装入口仅为 Mod/MCP 启用官方编译缓存，尊重禁用与已�
   const custom=path.join(directory,'用户自有缓存');assert.ok((await run('mcp',{NODE_COMPILE_CACHE:custom}))?.startsWith(custom+path.sep));
   const unavailable=path.join(directory,'不能写缓存');mkdirSync(path.join(unavailable,'run'),{recursive:true});writeFileSync(path.join(unavailable,'run','compile-cache'),'普通文件','utf8');
   assert.equal(await run('mcp',{NXBRIDGE_HOME:unavailable}),null,'缓存不可写不能阻止原命令运行');
-  const fs=await import('node:fs');try{fs.linkSync(process.execPath,alternate);}catch{fs.copyFileSync(process.execPath,alternate);}
+  copyNodeBinary(alternate);
   installShim(planShim(home,{entry,node:alternate,pathValue:''}));assert.ok((await run('mod'))?.startsWith(expected));assert.equal(await run('hook'),null);
 });
 

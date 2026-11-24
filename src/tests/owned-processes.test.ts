@@ -1,3 +1,4 @@
+import { copyNodeBinary } from './support/node-binary.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -5,7 +6,7 @@ import { once } from 'node:events';
 import { Worker } from 'node:worker_threads';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import net from 'node:net';
@@ -176,7 +177,7 @@ test('主账本无法打开时仍核验外部归属并释放自有进程，保�
 for(const selector of ['--session-id','--resume'])test('Windows 旧 Claude 端点的同代专属 PTY 父链一并迁移，首次释放不遗留宿主：'+selector,{skip:process.platform!=='win32',timeout:30000},async t=>{
                                                        
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),configHome=path.join(temp.directory,'claude-home'),official=path.join(temp.directory,process.platform==='win32'?'claude.exe':'claude'),sessionId=randomUUID();
-  mkdirSync(home);copyFileSync(process.execPath,official);
+  mkdirSync(home);copyNodeBinary(official);
   const store=new Store(path.join(home,'nxbridge.db')),adapter=new ClaudeAdapter({...DEFAULT_CONFIG,claudeHome:configHome},home);
   const launcher=spawn(official,['-e',"const{spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});console.log(c.pid);setInterval(()=>{},1000);",'--','--bg-pty-host',selector,sessionId],{stdio:['ignore','pipe','pipe'],windowsHide:true}),closed=once(launcher,'close');
   let native:Awaited<ReturnType<typeof processIdentity>>|undefined,parent:Awaited<ReturnType<typeof processIdentity>>|undefined;

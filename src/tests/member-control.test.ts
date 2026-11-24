@@ -1,8 +1,9 @@
+import { copyNodeBinary } from './support/node-binary.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { copyFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { fixture } from './support/broker-fixture.js';
@@ -166,7 +167,7 @@ test('原生历史读取期间关闭成员，不再认领、注入、续跑或�
 });
 
 test('用户亲自在已关闭 Codex 的输入框开启另一侧，hook 不登记窗口或注入上下文',async t=>{
-  const f=fixture(t),temp=temporaryDirectory(),home=f.broker.home,configHome=path.join(temp.directory,'codex'),binary=path.join(temp.directory,process.platform==='win32'?'codex.exe':'codex');copyFileSync(process.execPath,binary);
+  const f=fixture(t),temp=temporaryDirectory(),home=f.broker.home,configHome=path.join(temp.directory,'codex'),binary=path.join(temp.directory,process.platform==='win32'?'codex.exe':'codex');copyNodeBinary(binary);
   const script=`process.title='codex';process.on('message',p=>{const c=require('node:child_process').spawn(p.node,[p.entry,'hook','--host','codex'],{env:process.env,windowsHide:true,stdio:['pipe','pipe','pipe']});let out='',err='';c.stdout.on('data',d=>out+=d);c.stderr.on('data',d=>err+=d);c.on('close',code=>process.send({code,out,err}));c.stdin.end(JSON.stringify(p.input));});process.send('ready');`;
   const native=spawn(binary,['-e',script],{env:{...process.env,NXBRIDGE_HOME:home,CODEX_HOME:configHome},windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),closed=once(native,'close');let server:Awaited<ReturnType<typeof listenBroker>>|undefined;
   t.after(async()=>{if(native.exitCode===null&&native.signalCode===null)native.kill();await closed;await server?.close();await temp.cleanup();});await once(native,'message');
@@ -176,7 +177,7 @@ test('用户亲自在已关闭 Codex 的输入框开启另一侧，hook 不登�
 });
 
 test('关闭后的真实 MCP 入口不连接 broker、所有业务工具简短返回 off，保留控制入口',async t=>{
-  const f=fixture(t),temp=temporaryDirectory(),home=temp.directory,binary=path.join(home,process.platform==='win32'?'codex.exe':'codex');copyFileSync(process.execPath,binary);
+  const f=fixture(t),temp=temporaryDirectory(),home=temp.directory,binary=path.join(home,process.platform==='win32'?'codex.exe':'codex');copyNodeBinary(binary);
   const script=`process.title='codex';process.send('ready');process.on('message',async p=>{try{const{Client}=await import(p.client);const{StdioClientTransport}=await import(p.transport);const c=new Client({name:'off-test',version:'1'});const tr=new StdioClientTransport({command:p.node,args:[p.entry,'mcp','--host','codex'],env:process.env,stderr:'pipe'});let err='';tr.stderr?.on('data',d=>err+=d);await c.connect(tr);const list=await c.listTools();const values=[];for(const name of ['send_message','receive_messages','checkpoint'])values.push(await c.callTool({name,arguments:name==='send_message'?{message:'不应发送'}:{},_meta:{threadId:'x',sessionId:'x'}}));await c.close();process.send({names:list.tools.map(t=>t.name),values,err});}catch(e){process.send({error:String(e)});}});`;
   const native=spawn(binary,['-e',script],{env:{...process.env,NXBRIDGE_HOME:home,CODEX_HOME:path.join(home,'codex-home')},windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),closed=once(native,'close');
   t.after(async()=>{if(native.exitCode===null&&native.signalCode===null)native.kill();await closed;await temp.cleanup();});await once(native,'message');

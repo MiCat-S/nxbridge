@@ -1,8 +1,9 @@
+import { copyNodeBinary } from './support/node-binary.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { copyFileSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { temporaryDirectory } from './support/temporary.js';
 import { FakeAdapter } from './support/fake-adapter.js';
@@ -20,7 +21,7 @@ import { writeMemberControls } from '../broker/member-control.js';
 
 test('轻量客户端复用登记、通知、控制与失败保护，旧协调器回退且未知结果不重放',{timeout:60000},async t=>{
   const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),configHome=path.join(root,'client-codex'),binary=path.join(root,process.platform==='win32'?'codex.exe':'codex');
-  await ensureHome(home);copyFileSync(process.execPath,binary);
+  await ensureHome(home);copyNodeBinary(binary);
   const store=new Store(':memory:'),broker=new Broker(store,{...DEFAULT_CONFIG,implicit:'never'},{codex:new FakeAdapter(),claude:new FakeAdapter()} as any,home);
   let legacy=false,uncertain=false;const calls:string[]=[];
   const server=await listenBroker(home,async(method,params)=>{calls.push(method);if(method==='hook.client'&&legacy)throw new BridgeError('unknown_method','旧协调器');if(method==='hook.client'&&uncertain)throw new BridgeError('timeout','已提交的结果未知');return broker.dispatch(method,params);});

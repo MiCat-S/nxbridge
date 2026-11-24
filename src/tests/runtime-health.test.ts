@@ -1,3 +1,4 @@
+import { copyNodeBinary } from './support/node-binary.js';
 import test, {type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -6,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
-import { copyFileSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { WebSocketServer } from 'ws';
 import { Store } from '../storage/store.js';
 import { Broker } from '../broker/coordinator.js';
@@ -166,7 +167,7 @@ test('协调器协议或内部错误保留真实原因，不伪造离线投递�
 test('原生 hook 在 MCP 与 broker 均死亡时注入可读通知，不启动 broker、不重发或污染子线程',async t=>{
   const temp=temporaryDirectory(),home=temp.directory;await ensureHome(home);
   let store:Store|undefined,broker:Broker|undefined,server:Awaited<ReturnType<typeof listenBroker>>|undefined;
-  const executable=path.join(home,process.platform==='win32'?'codex.exe':'codex');if(process.platform==='win32')copyFileSync(process.execPath,executable);else symlinkSync(process.execPath,executable);
+  const executable=path.join(home,process.platform==='win32'?'codex.exe':'codex');if(process.platform==='win32')copyNodeBinary(executable);else symlinkSync(process.execPath,executable);
   const driver=spawn(executable,['-e',`process.title='codex';const {spawn}=require('node:child_process');process.on('message',p=>{const c=spawn(${JSON.stringify(process.execPath)},['--no-warnings',${JSON.stringify(path.join(PACKAGE_ROOT,'publish','nxbridge.mjs'))},'hook','--host','codex'],{env:process.env,windowsHide:true,stdio:['pipe','pipe','pipe']});let stdout='',stderr='';c.stdout.on('data',d=>stdout+=d);c.stderr.on('data',d=>stderr+=d);c.on('exit',code=>process.send({code,stdout,stderr}));c.stdin.end(JSON.stringify(p));});process.send('ready');`],{env:{...process.env,NXBRIDGE_HOME:home},windowsHide:true,stdio:['ignore','ignore','pipe','ipc']});
   let driverError='';driver.stderr!.on('data',piece=>driverError+=piece);
   const exit=once(driver,'exit');t.after(async()=>{if(driver.exitCode===null&&driver.signalCode===null)driver.kill();await exit;await server?.close();await broker?.stop();store?.close();await temp.cleanup();});

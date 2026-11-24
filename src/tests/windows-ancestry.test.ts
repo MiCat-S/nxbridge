@@ -1,3 +1,4 @@
+import { copyNodeBinary } from './support/node-binary.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
@@ -37,7 +38,7 @@ test('Windows 通用祖先查询冷准备及并发暖查询保持同代父链，
 
 test('Windows 超过 MAX_PATH 的中文及代理对映像、更新后缀和完整长参数均不截断',options,async t=>{
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),directory=path.join(temp.directory,...Array(5).fill('中文 e\u0301 Ω 🚀 '+ 'long'.repeat(12))),binary=path.join(directory,'codex.exe'),old=binary+'.old.123456';
-  mkdirSync(directory,{recursive:true});assert.ok(binary.length>300);copyFileSync(process.execPath,binary);
+  mkdirSync(directory,{recursive:true});assert.ok(binary.length>300);copyNodeBinary(binary);
   const argument='中文 🚀 Ω e\u0301 '.repeat(1000),child=spawn(path.toNamespacedPath(binary),['-e',"process.send('ready');setInterval(()=>{},1000)",argument],{windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),closed=new Promise<void>(resolve=>child.once('close',()=>resolve()));
   t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill();await closed;await temp.cleanup();});await once(child,'message');
   renameSync(binary,old);

@@ -1,7 +1,8 @@
+import { copyNodeBinary } from './support/node-binary.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import fs, { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import fs, { mkdirSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { ChildProcess, spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -25,7 +26,7 @@ async function fixture(t:TestContext){
       finally{store.close();await temp.cleanup();}
     }
   });
-  copyFileSync(process.execPath,executable);
+  copyNodeBinary(executable);
   child=spawn(executable,['-e',"process.title='claude';process.send('ready');process.disconnect();setInterval(()=>{},1000)"],{stdio:['ignore','ignore','ignore','ipc'],windowsHide:true});await once(child,'message');
   processProof=await rememberOwnedChild(home,child,'claude-native',{peerId:peer.id,sessionId,configHome:home});assert.ok(processProof);
   const identity=processProof.identity,record={sessionId,cwd:home,procStart:identity.procStartFt??identity.procStart??identity.startedAt,messagingSocketPath:'native-inbox'};

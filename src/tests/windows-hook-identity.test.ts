@@ -1,7 +1,8 @@
+import { copyNodeBinary } from './support/node-binary.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { copyFileSync, renameSync, unlinkSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { renameSync, unlinkSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { spawn,execFile } from 'node:child_process';
@@ -34,7 +35,7 @@ test('预检原生助手目录仅作用于当前异步调用，并行上下文�
 });
 
 test('Windows 常驻助手并发查询使用新句柄，崩溃后重建且退出不沿用旧身份',{skip:process.platform!=='win32',timeout:30000},async t=>{
-  const temp=temporaryDirectory(),binary=path.join(temp.directory,'codex.exe'),home=path.join(temp.directory,'bridge');copyFileSync(process.execPath,binary);
+  const temp=temporaryDirectory(),binary=path.join(temp.directory,'codex.exe'),home=path.join(temp.directory,'bridge');copyNodeBinary(binary);
   const native=spawn(binary,['-e',"process.send('ready');setInterval(()=>{},1000)"],{windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),ended=once(native,'exit'),session=new WindowsIdentitySession(home);
   t.after(async()=>{session.close();if(native.exitCode===null&&native.signalCode===null)native.kill();await ended;await temp.cleanup();});await once(native,'message');
   await session.prepare(10000);const prepared=(session as any).child;
@@ -75,10 +76,10 @@ test('Windows 常驻助手短请求超时不取消并发请求，悬挂后下一
 });
 
 for(const host of ['codex','claude'] as const)test('Windows '+host+' 更新改名后原进程继续核验，启动捕获不保存旧映像',{skip:process.platform!=='win32',timeout:30000},async t=>{
-  const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),binary=path.join(temp.directory,host+'.exe'),old=binary+'.old.1793751136207';copyFileSync(process.execPath,binary);
+  const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),binary=path.join(temp.directory,host+'.exe'),old=binary+'.old.1793751136207';copyNodeBinary(binary);
   const child=spawn(binary,['-e',"process.send('ready');setInterval(()=>{},1000)"],{argv0:host,windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),exit=once(child,'exit');
   t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill();await exit;await temp.cleanup();});await once(child,'message');
-  const expected=await processIdentity(child.pid!);renameSync(binary,old);copyFileSync(process.execPath,binary);
+  const expected=await processIdentity(child.pid!);renameSync(binary,old);copyNodeBinary(binary);
   const found=await readWindowsHookIdentity(child.pid!,home,host);
   assert.equal(found.pid,child.pid);assert.equal(found.procStart,expected.startedAt);assert.equal(found.image,old);assert.ok(sameDirectory(found.launchImage,binary));
   const row=await processIdentity(child.pid!);
@@ -93,11 +94,11 @@ for(const host of ['codex','claude'] as const)test('Windows '+host+' 更新改�
     assert.ok(missing);assert.equal(missing.startedAt,expected.startedAt);
     await assert.rejects(captureUserLaunch(home,{host,sessionId:'renamed',nativePid:live.pid,nativeGeneration:live.procStart,sourcePid:live.pid,sourceGeneration:live.procStart,env:{},force:true},peer,live.pid,{ancestors:async()=>[missing],version:async()=> 'native-update'}),{code:'launch_image_missing'});
     assert.equal(child.exitCode,null);
-  }finally{copyFileSync(process.execPath,binary);}
+  }finally{copyNodeBinary(binary);}
 });
 
 for(const host of ['codex','claude'] as const)test('Windows 原生 '+host+' 助手以同一句柄读取完整代次和含中文引号的启动参数',{skip:process.platform!=='win32',timeout:30000},async t=>{
-  const temp=temporaryDirectory(),binary=path.join(temp.directory,host+'.exe'),home=path.join(temp.directory,'bridge');copyFileSync(process.execPath,binary);
+  const temp=temporaryDirectory(),binary=path.join(temp.directory,host+'.exe'),home=path.join(temp.directory,'bridge');copyNodeBinary(binary);
   const argument='本地身份 Ω "带引号"',child=spawn(binary,['-e',"process.send('ready');setInterval(()=>{},1000)",argument],{windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),exit=once(child,'exit');
   t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill();await exit;await temp.cleanup();});await once(child,'message');
   const expected=await processIdentity(child.pid!),began=performance.now(),first=await readWindowsHookIdentity(child.pid!,home,host),coldMs=performance.now()-began,warm=performance.now();
@@ -167,7 +168,7 @@ test('Windows 包装器提前退出后交接真实宿主句柄，宿主退出会
 });
 
 test('Windows 程序别名的参数只取精确 PID 和代次，不替换成同名祖先',{skip:process.platform!=='win32',timeout:30000},async t=>{
-  const temp=temporaryDirectory(),binary=path.join(temp.directory,'custom-runtime.exe');copyFileSync(process.execPath,binary);
+  const temp=temporaryDirectory(),binary=path.join(temp.directory,'custom-runtime.exe');copyNodeBinary(binary);
   const argument='精确参数 Ω "引号"',child=spawn(binary,['-e',"process.send('ready');setInterval(()=>{},1000)",argument],{windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),exit=once(child,'exit');
   t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill();await exit;await temp.cleanup();});await once(child,'message');
   const identity=await processIdentity(child.pid!);

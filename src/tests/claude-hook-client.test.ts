@@ -1,9 +1,10 @@
+import { copyNodeBinary } from './support/node-binary.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {createHmac,randomBytes} from 'node:crypto';
-import {copyFileSync,mkdirSync,writeFileSync,unlinkSync} from 'node:fs';
+import {mkdirSync,writeFileSync,unlinkSync} from 'node:fs';
 import path from 'node:path';
 import {temporaryDirectory} from './support/temporary.js';
 import {FakeAdapter} from './support/fake-adapter.js';
@@ -24,7 +25,7 @@ test('Claude 薄 hook 逐次核验官方父会话；旧版可回退，身份冲�
                                        
   process.env.NXBRIDGE_MANAGED_PEER='0b25357d-dfc4-4d4f-ac9f-7151d659d22e';process.env.NXBRIDGE_OWNED_LAUNCH='claude:e9157d0e-cf67-4e05-9813-df0986cd97a8';
   const temporary=temporaryDirectory(),root=temporary.directory,home=path.join(root,'bridge'),configHome=path.join(root,'claude'),binary=path.join(root,'bin',process.platform==='win32'?'claude.exe':'claude');
-  await ensureHome(home);mkdirSync(path.join(configHome,'sessions'),{recursive:true});mkdirSync(path.dirname(binary));copyFileSync(process.execPath,binary);
+  await ensureHome(home);mkdirSync(path.join(configHome,'sessions'),{recursive:true});mkdirSync(path.dirname(binary));copyNodeBinary(binary);
   const store=new Store(':memory:'),broker=new Broker(store,{...DEFAULT_CONFIG,implicit:'never'},{codex:new FakeAdapter(),claude:new FakeAdapter()} as any,home);
   let unavailable:string|undefined,uncertain=false,forgeHook=false;const calls:string[]=[];
   const server=await listenBroker(home,async(method,params:any)=>{

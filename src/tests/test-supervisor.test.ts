@@ -1,9 +1,10 @@
+import { copyNodeBinary } from './support/node-binary.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import fs from 'node:fs';
-import { copyFileSync, existsSync, mkdirSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { syncBuiltinESMExports } from 'node:module';
 import { promisify } from 'node:util';
@@ -32,7 +33,7 @@ test('控制归属与原生配置可分别属于已登记夹具，任一未登�
 
 test('原生测试服务与产品卸载分开归属，卸载不能提前强杀仍负责回收子进程的服务',async t=>{
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),configHome=path.join(temp.directory,'claude-home'),binary=path.join(temp.directory,process.platform==='win32'?'claude.exe':'claude');
-  mkdirSync(home);mkdirSync(configHome);copyFileSync(process.execPath,binary);
+  mkdirSync(home);mkdirSync(configHome);copyNodeBinary(binary);
   const control=await beginTestControl(home,configHome);assert.ok(control);
   const child=spawn(binary,['-e',"process.title='claude';process.send('ready');setInterval(()=>{},1000)"],{windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),closed=once(child,'close');
   t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill();await closed;await temp.cleanup();});

@@ -1,3 +1,4 @@
+import { copyNodeBinary } from '../tests/support/node-binary.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
@@ -17,7 +18,7 @@ for(const alias of [false,true])test('自定义包装器启动官方 App Server�
   const temporary=temporaryDirectory(),directory=temporary.directory,home=path.join(directory,'bridge'),codexhome=path.join(directory,'codex'),script=path.join(directory,'wrapper.mjs');mkdirSync(codexhome);
   let prepared=false;t.after(async()=>{if(!prepared)await temporary.cleanup();});
   const official=resolveCli('codex',process.env.NXBRIDGE_TEST_CODEX_BINARY);
-  if(alias){const binary=path.join(directory,'custom-runtime.exe');linkSync(official.command,binary);official.command=binary;linkSync(process.execPath,path.join(directory,'codex.exe'));}
+  if(alias){const binary=path.join(directory,'custom-runtime.exe');linkSync(official.command,binary);official.command=binary;copyNodeBinary(path.join(directory,'codex.exe'));}
   writeFileSync(path.join(codexhome,'config.toml'),'web_search="disabled"\n[features]\napps=false\nremote_plugin=false\n','utf8');
   writeFileSync(script,"import {spawn} from 'node:child_process';"+(alias?"const helper=spawn("+JSON.stringify(path.join(directory,'codex.exe'))+",['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});":"")+"const child=spawn("+JSON.stringify(official.command)+","+JSON.stringify(official.prefix)+".concat(process.argv.slice(2)),{stdio:'inherit',env:{...process.env,CODEX_HOME:"+JSON.stringify(codexhome)+"}});child.on('exit',code=>{"+(alias?'helper.kill();':'')+"process.exitCode=code??1;});",'utf8');
   const config={...DEFAULT_CONFIG,codexCommand:[process.execPath,script],codexHome:codexhome},adapter=new CodexAdapter(config,home),adapters=[adapter],proxy=process.env.HTTPS_PROXY;
