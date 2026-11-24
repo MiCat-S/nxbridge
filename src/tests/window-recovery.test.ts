@@ -112,6 +112,34 @@ test('用户另选搭档后，旧沿袭草稿不能被后续登记误发给新�
   await broker.dispatch('register',input);assert.equal(store.pairFor(fresh.id)?.id,chosen.id);assert.equal(store.messages().length,0);
 });
 
+test('同一会话更换进程后，旧草稿不阻塞登记、有效草稿恢复和新消息发送',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:1000000});
+  const {store,broker}=fixture(t),original=store.register(window('claude','resumed',10)),partner=store.register(window('codex','partner',11));
+  store.pair(original.id,partner.id);
+  let oldState:'unknown'|'dead'='unknown';
+  const recovery=new WindowRecovery(store,async()=>['alive',oldState]);(broker as any).windowRecovery=recovery;
+  const paired=await recovery.register(window('claude','resumed',20)),staleActor=actor(store,paired.id,'old-draft');
+  const staleDraft={actor:staleActor,message:'旧进程草稿'};
+  assert.equal((await broker.dispatch('send',staleDraft) as {status:string}).status,'lineage_held');
+  const chosen=await broker.dispatch('pair',{claude:paired.id,codex:partner.id,replace:true}) as {id:string};
+
+  const input=window('claude','resumed',30),provisional=await recovery.register(input);
+  const currentDraft={actor:actor(store,provisional.id,'current-draft'),message:'当前进程草稿'};
+  assert.equal((await broker.dispatch('send',currentDraft) as {status:string}).status,'lineage_held');
+  t.mock.timers.tick(5000);oldState='dead';
+  const registered=await broker.dispatch('register',input) as {id:string;binding:Actor['binding']};
+  assert.equal(registered.id,paired.id);
+  assert.notEqual(registered.binding?.epoch,staleActor.binding?.epoch);
+  assert.deepEqual(registered.binding,currentDraft.actor.binding);
+  assert.deepEqual(store.messages().map(message=>[message.body,message.pairId]),[[currentDraft.message,chosen.id]]);
+
+  await broker.dispatch('register',input);
+  await assert.rejects(broker.dispatch('send',staleDraft),{code:'stale_context'});
+  const sent=await broker.dispatch('send',{actor:{host:'claude',sessionId:input.sessionId,memberId:registered.id,callId:'new-send',binding:registered.binding},message:'重新登记后发送'}) as {message_id:string};
+  assert.equal(store.message(sent.message_id).to,partner.id);
+  assert.deepEqual(store.messages().map(message=>message.body),[currentDraft.message,'重新登记后发送']);
+});
+
 test('异步代次核验期间原配对改变，旧结果不能接管成员',async t=>{
   const store=new Store(':memory:');t.after(()=>store.close());const c=store.register(window('claude','resumed',10)),x=store.register(window('codex','partner',11));store.pair(c.id,x.id);
   let release!:(states:('alive'|'dead')[])=>void;

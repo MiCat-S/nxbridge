@@ -79,7 +79,13 @@ export class PairSelections {
         const selection=JSON.parse(row.data as string) as Selection;
         if(!selection.draft||!selection.reason?.startsWith('lineage_'))continue;
                                                        
-        const peer=this.store.resolve(selection.draft.actor);
+        let peer:Peer|undefined;
+        try{peer=this.store.resolve(selection.draft.actor);}
+        catch(error){
+          // 旧窗口留下的草稿不能阻塞新窗口登记，也不能在新窗口代发。
+          if(error instanceof BridgeError&&error.code==='stale_context')continue;
+          throw error;
+        }
         if(!peer||peer.id!==selection.peerId||peer.sessionId!==selection.sessionId||this.store.bindings.current(peer.id)?.epoch!==selection.epoch)continue;
         if(!selection.lineagePairId||this.store.pairFor(peer.id)?.id!==selection.lineagePairId)continue;
         selection.receipt=send(selection.draft);selection.status='committed';this.save(selection);
