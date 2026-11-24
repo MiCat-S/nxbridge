@@ -9,7 +9,8 @@ import {DEFAULT_RETENTION} from '../config/defaults.js';
 import {atomicJson,readJson} from '../shared/files.js';
 import {bridgeHome,ipcAddress} from '../shared/local-paths.js';
 import {delay} from '../shared/time.js';
-import {ensureHome,ipcToken} from './home.js';
+import {ensureHome} from './home.js';
+import {ipcToken} from './token.js';
 import {loadConfig} from '../config/load.js';
 import { neutralEnvironment } from '../process/environment.js';
 import { rotateLog } from '../storage/logs.js';
@@ -74,7 +75,7 @@ type BrokerStartOptions={bootstrap?:boolean;reserved?:boolean;deadline?:number};
 export async function ensureBroker(home=bridgeHome(),options:BrokerStartOptions={}):Promise<RpcClient>{
   if(options.bootstrap||options.reserved)return ensureBrokerNow(home,options);
   if(!installationEnabled(home))throw new BridgeError('uninstalled','nxbridge 已卸载；运行 setup 后重新启用。');
-  try{return await pingBroker(home,2000,options.deadline);}catch{}
+  try{return await pingBroker(home,2000,options.deadline);}catch(error){if((error as {code?:string}).code==='ipc_token_invalid')throw error;}
   remainingTime(options.deadline,2000);
   const key=path.resolve(home);let work=brokerStarts.get(key);
   if(!work){
@@ -91,7 +92,7 @@ async function ensureBrokerNow(home:string,options:BrokerStartOptions):Promise<R
                                                
   for(let attempt=0;attempt<40;attempt++){
     try{return await pingBroker(home,2000,options.deadline);}
-    catch(error){if((error as {code?:string}).code!=='stopping')break;if(attempt===39)throw error;await delay(budget(50));}
+    catch(error){const code=(error as {code?:string}).code;if(code==='ipc_token_invalid')throw error;if(code!=='stopping')break;if(attempt===39)throw error;await delay(budget(50));}
   }
   budget(2000);
   await ensureHome(home);
@@ -143,13 +144,13 @@ async function ensureBrokerNow(home:string,options:BrokerStartOptions):Promise<R
     requireBackgroundRetry(home,options.bootstrap);
     try{
       const record=await launchIndependentWindows({home,executable:runtime.node,args:['--no-warnings',runtime.entry,'service'],cwd:home,env:environment.env,logfile,role:'broker',launchId:randomUUID(),deadline:options.deadline});
-      atomicJson(path.join(home,'run','launch-broker.json'),{pid:record.identity.pid,generation:record.identity.startedAt,independent:true,spawnedAt:Date.now(),environment:environment.report});
+      atomicJson(path.join(home,'run','launch-broker.json'),{pid:record.identity.pid,generation:record.identity.startedAt,independent:true,spawnedAt:Date.now(),environment:environment.report},{durability:'buffered'});
       recordBackgroundState(home);
     }catch(error){recordBackgroundState(home,describeError(error),backgroundRetryContext(origin));throw error;}
   }else{
   const fd=openSync(logfile,'a',0o600);
   const child=spawn(runtime.node,['--no-warnings',runtime.entry,'service-launch'],{env:environment.env,detached:true,windowsHide:true,stdio:['ignore',fd,fd]});
-  if(child.pid)atomicJson(path.join(home,'run','launch-broker.json'),{pid:child.pid,spawnedAt:Date.now(),environment:environment.report});
+  if(child.pid)atomicJson(path.join(home,'run','launch-broker.json'),{pid:child.pid,spawnedAt:Date.now(),environment:environment.report},{durability:'buffered'});
   child.unref();closeSync(fd);
   child.on('error',error=>{launchError=error;});
   await rememberOwnedChild(home,child,'broker');

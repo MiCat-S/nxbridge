@@ -1,12 +1,13 @@
 import {embeddedSource} from "../shared/embedded-source.js";
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { processIdentity, probeProcesses } from '../process/process.js';
 import {delay} from '../shared/time.js';
 import {BridgeError} from '../shared/errors.js';
+import {stateDirectory} from '../storage/state-directory.js';
 
 type Owner={pid:number;startedAt:string};
 type Reservation={pid:number;generation:string;token:string;expires_at?:number};
@@ -32,7 +33,7 @@ async function retryBusy<T>(work:()=>T,deadline:number):Promise<T>{
                                         
 async function locked<T>(home:string,work:(db:DatabaseSync)=>T|Promise<T>):Promise<T>{
   const filename=path.join(home,'run','broker-startup.db');
-  mkdirSync(path.dirname(filename),{recursive:true});
+  stateDirectory(path.dirname(filename),0o700);
   const {DatabaseSync:Database}=createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
   const deadline=performance.now()+15000;
   const db=new Database(filename,{timeout:0});

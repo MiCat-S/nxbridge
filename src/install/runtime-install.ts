@@ -10,6 +10,7 @@ import { liveProcess, processIdentity } from '../process/process.js';
 import {BridgeError} from '../shared/errors.js';
 import { resolveNodeRuntime } from './node-runtime.js';
 import { retryWindowsFileOperation } from '../storage/atomic-file.js';
+import {stateDirectory} from '../storage/state-directory.js';
 
 const execute=promisify(execFile),OWNER='nxbridge-publish-v1';
 const digest=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
@@ -80,7 +81,7 @@ export async function stageRuntime(home:string,source:string):Promise<RuntimeCan
   if(!manifest)throw new BridgeError('publish_missing','没有找到构建好的 publish 目录。请在工程目录里先运行 npm run build:publish，或用 --from 指定一个 publish 目录。');
   const {buildId,version}=manifest,root=path.join(home,'runtime'),directory=path.join(root,buildId),entry=path.join(directory,'nxbridge.mjs');
   if(!inside(root,directory)||!sameDirectory(path.dirname(directory),root))throw new BridgeError('publish_invalid','发布构建编号不能包含目录路径。');
-  mkdirSync(root,{recursive:true});
+  stateDirectory(root);
   if(existsSync(directory)){
     if(!ownsRuntime(home,directory))throw new BridgeError('runtime_conflict','目标运行时目录不属于本次安装，未覆盖。');
     verifyPublish(directory);

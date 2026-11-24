@@ -1,6 +1,6 @@
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {existsSync,readFileSync,writeFileSync,unlinkSync,lstatSync,readdirSync} from 'node:fs';
+import {existsSync,unlinkSync,lstatSync,readdirSync} from 'node:fs';
 import {userInfo} from 'node:os';
 import path from 'node:path';
 import {randomBytes} from 'node:crypto';
@@ -9,19 +9,19 @@ import {privateDirectory} from '../process/permissions.js';
 import {sameDirectory} from '../shared/files.js';
 import {windowsPowerShell} from '../shared/windows-tools.js';
 import {bridgeHome,ownedSocketDirectory} from '../shared/local-paths.js';
+import {atomicWriteText} from '../storage/atomic-file.js';
 import {codexSocketAlias} from './unix-socket.js';
+import {ipcTokenFile} from './token.js';
 const execute=promisify(execFile);
 export async function ensureHome(home = bridgeHome(),repair=false): Promise<void> {
   await privateDirectory(home,repair,repair);
   await privateDirectory(path.join(home, 'run'),repair);
   if((process.platform!=='win32'||repair)&&ownedSocketDirectory(home)!==path.join(home,'run'))await socketDirectory(home,repair);
-  const tokenPath = path.join(home, 'run', 'token');
-  try { writeFileSync(tokenPath, randomBytes(32).toString('hex'), { flag: 'wx', mode: 0o600 }); }
+  const tokenPath=ipcTokenFile(home);
+  if(existsSync(tokenPath))return;
+  try { atomicWriteText(tokenPath,randomBytes(32).toString('hex'),{exclusive:true}); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
 }
-
-export function ipcToken(home = bridgeHome()): string { return readFileSync(path.join(home, 'run', 'token'), 'utf8').trim(); }
-
 
 export async function socketDirectory(home = bridgeHome(),repair=false): Promise<string> {
   const directory=ownedSocketDirectory(home);

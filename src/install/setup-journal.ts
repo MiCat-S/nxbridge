@@ -3,6 +3,7 @@ import { existsSync, readFileSync, mkdirSync, chmodSync, unlinkSync, lstatSync, 
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { atomicWriteFile, atomicWriteText, retryWindowsFileOperation } from '../storage/atomic-file.js';
+import {stateDirectory} from '../storage/state-directory.js';
 import { managedMarker, inside, ownsFile, cacheBelongsTo, type ManagedFile } from './installation.js';
 import { fileHashes, type InstallReceipt } from './runtime-install.js';
 import { processIdentity, liveProcess } from '../process/process.js';
@@ -61,7 +62,7 @@ function apply(home:string,intent:Intent,checkpoint:Checkpoint=()=>{},cached?:Ca
     if(changed.length)conflict(changed.map(w=>w.file));
     for(let index=0;index<intent.writes.length;index++){
       const w=intent.writes[index]!;
-      if(text(w.file)!==w.after){mkdirSync(path.dirname(w.file),{recursive:true});atomicWriteText(w.file,w.after);}
+      if(text(w.file)!==w.after){stateDirectory(path.dirname(w.file));atomicWriteText(w.file,w.after);}
       if(process.platform!=='win32'&&path.basename(w.file)==='nxbridge')chmodSync(w.file,0o755);
       checkpoint(intent.label+':write:'+index);
     }
@@ -83,7 +84,7 @@ function apply(home:string,intent:Intent,checkpoint:Checkpoint=()=>{},cached?:Ca
     for(const [file,hash] of Object.entries(intent.after)){
       const content=cached.contents.get(file)!;
       const target=path.join(intent.target,file);
-      if(cached.current[file]!==hash){mkdirSync(path.dirname(target),{recursive:true});atomicWriteFile(target,content);}
+      if(cached.current[file]!==hash){stateDirectory(path.dirname(target));atomicWriteFile(target,content);}
       checkpoint(intent.label+':write:'+file);
     }
     checkpoint(intent.label+':copied');
@@ -96,7 +97,7 @@ function commit(home:string,intent:Omit<FilesIntent,'process'|'version'|'owner'>
   if(existsSync(pendingFile(home)))throw new BridgeError('setup_pending','已有未完成的安装提交；请再运行一次同样的命令自动恢复。');
   const value={...intent,version:1 as const,owner:managedMarker(home),process} as Intent;
                                           
-  atomicWriteText(pendingFile(home),json(value),true);checkpoint(value.label+':intent');
+  atomicWriteText(pendingFile(home),json(value),{exclusive:true});checkpoint(value.label+':intent');
   apply(home,value,checkpoint,cached);
 }
 

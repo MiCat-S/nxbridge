@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { existsSync, readdirSync, unlinkSync } from 'node:fs';
 import {atomicJson,readJson} from '../shared/files.js';
 import { claudeBackgroundHost, matchesProcess, processAncestors, processIdentity, type ProcessIdentity } from './process.js';
 import { ownedProcessState } from './process-stop.js';
@@ -8,6 +8,7 @@ import { ownedProcesses, prepareProcessRegistry, processRegistryDirectory, recor
 import {BridgeError,describeError} from '../shared/errors.js';
 import {type Peer} from '../types.js';
 import type {SessionRecord} from '../hosts/claude/claude-inbox.js';
+import {stateDirectory} from '../storage/state-directory.js';
 import { sameHostImage } from '../hosts/host-launch.js';
 
 export interface NativeOwnership {
@@ -34,7 +35,7 @@ export function nativeOwnership(home:string,peerId:string):NativeOwnership|undef
 }
 export function saveNativeOwnership(value:NativeOwnership):void{
                                              
-  const filename=file(value.home,value.peerId);mkdirSync(path.dirname(filename),{recursive:true,mode:0o700});atomicJson(filename,value);
+  const filename=file(value.home,value.peerId);stateDirectory(path.dirname(filename),0o700);atomicJson(filename,value);
 }
 export function nativeOwnershipForSession(home:string,sessionId:string):NativeOwnership|undefined{
   const matches=nativeOwnershipRecords(home).filter(value=>value.sessionId===sessionId);

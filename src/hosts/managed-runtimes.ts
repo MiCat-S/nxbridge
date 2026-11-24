@@ -1,9 +1,11 @@
 import path from 'node:path';
-import { existsSync, mkdirSync, readdirSync, unlinkSync,readFileSync,writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, unlinkSync,readFileSync } from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {atomicJson,readJson} from '../shared/files.js';
 import { managedMarker } from '../install/installation.js';
 import {BridgeError} from '../shared/errors.js';
+import {atomicWriteText} from '../storage/atomic-file.js';
+import {stateDirectory} from '../storage/state-directory.js';
 import { ownedProcesses, ownedRecordState, ownedRecordPredatesBoot, currentLinuxBootId, type OwnedProcessRecord } from '../process/owned-processes.js';
 import { ownedProcessState, type ProcessState } from '../process/process-stop.js';
 import type { SessionProfile } from './codex/codex-session-profile.js';
@@ -21,14 +23,16 @@ export const runtimeDirectory=(home:string)=>path.join(home,'run','runtimes');
 const tokenFile=(home:string,id:string)=>runtimeFile(home,id).replace(/\.json$/,'.token');
 export function createRuntimeToken(home:string,value:ManagedRuntime):string{
   if(!value.authenticatedLoopback||!/^ws:\/\/127\.0\.0\.1:\d+$/.test(value.endpoint))throw new BridgeError('runtime_record_invalid','认证后台必须绑定本地回环地址。');
-  const file=tokenFile(home,value.id);writeFileSync(file,randomBytes(32).toString('hex'),{encoding:'utf8',mode:0o600,flag:'wx'});return file;
+  const file=tokenFile(home,value.id);atomicWriteText(file,randomBytes(32).toString('hex'),{exclusive:true});return file;
 }
                                      
 export function managedRuntimeToken(home:string,endpoint:string):string|undefined{
   if(!/^ws:\/\/127\.0\.0\.1:\d+$/.test(endpoint))return;
   const runtime=runtimeFor(home,{endpoint})?.value;if(!runtime?.authenticatedLoopback)return;
   if(runtime.state==='failed'||!runtime.pid||!runtime.procStart||runtimePredatesBoot(runtime))throw new BridgeError('runtime_endpoint_unverified','后台原生代次尚未核验，未使用认证凭证。');
-  return readFileSync(tokenFile(home,runtime.id),'utf8').trim();
+  const token=readFileSync(tokenFile(home,runtime.id),'utf8').trim();
+  if(!/^[a-f0-9]{64}$/i.test(token))throw new BridgeError('runtime_token_invalid','托管后台的认证凭证损坏，已保留该后台；请等它正常退出后重新创建。');
+  return token;
 }
 export async function assertManagedRuntimeEndpoint(home:string,endpoint:string,verified?:{pid:number;procStart:string}):Promise<void>{
   if(!/^ws:\/\/127\.0\.0\.1:\d+$/.test(endpoint))return;
@@ -49,7 +53,7 @@ export function runtimeFile(home:string,id:string):string{
 export function saveManagedRuntime(home:string,value:ManagedRuntime):void{
   const file=runtimeFile(home,value.id);
   if(!existsSync(file)&&value.bootId===undefined){const bootId=currentLinuxBootId();if(bootId)value.bootId=bootId;}
-  mkdirSync(runtimeDirectory(home),{recursive:true,mode:0o700});atomicJson(file,value);
+  stateDirectory(runtimeDirectory(home),0o700);atomicJson(file,value);
 }
 export function managedRuntimes(home:string):RuntimeRecord[]{
   const directory=runtimeDirectory(home),result:RuntimeRecord[]=[];

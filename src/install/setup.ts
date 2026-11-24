@@ -8,6 +8,7 @@ import {bridgeHome} from '../shared/local-paths.js';
 import {CLI_PATH,PACKAGE_ROOT,COLLABORATION_GUIDE_PATH} from '../shared/package-location.js';
 import {delay} from '../shared/time.js';
 import {ensureHome} from '../ipc/home.js';
+import {preflightIpcTokenRepair,repairIpcToken} from '../ipc/token-repair.js';
 import {loadConfig} from '../config/load.js';
 import {privateDirectory} from '../process/permissions.js';
 import {runCli} from '../process/host-command.js';
@@ -186,7 +187,8 @@ export async function setup(options:{home?:string;prepareOnly?:boolean;dryRun?:b
 }
 
 async function setupInner(options:NonNullable<Parameters<typeof setup>[0]>,input:Partial<SetupServices>,controlHome?:string):Promise<unknown>{
-  const home=options.home??bridgeHome(),recoveredCaches=await recoverRetainedCaches(home,options.dryRun||options.prepareOnly),recoveryNotes=await recoverSetup(home,options.dryRun||options.prepareOnly),config=loadConfig(home);
+  const home=options.home??bridgeHome(),needsTokenRepair=!options.prepareOnly&&await preflightIpcTokenRepair(home);
+  const recoveredCaches=await recoverRetainedCaches(home,options.dryRun||options.prepareOnly),recoveryNotes=await recoverSetup(home,options.dryRun||options.prepareOnly),config=loadConfig(home);
   const statePath=path.join(home,'setup-state.json'),state:SetupState=existsSync(statePath)?readJson(statePath):freshState(home);
   const pending=state.pendingSetup;
   if(pending){
@@ -280,10 +282,17 @@ async function setupInner(options:NonNullable<Parameters<typeof setup>[0]>,input
   const preflight={requiredCapabilities:{passed:true,codex:['App Server initialize','config/read','configRequirements/read','plugin marketplace list','plugin list','命名空间策略'],claude:['plugin marketplace list','plugin list']},claudeBackground:background,...(claudeAutonomy?{claudeAutonomy}:{}),compatibility:{hosts:Object.fromEntries(versions.map(({host,version})=>[host,versionCompatibility(host,version)])),platform:platformCompatibility()},notice:'必需的只读能力检查通过；不调用模型，不证明已有窗口已加载插件或完整会话协议可用。'};
   const binPlan={directory:shim.directory,reason:shim.reason,command:shim.command,...(shim.notice?{notice:shim.notice}:{})};
   const actions=[`把 ${source.directory} 复制到 nxbridge 私有目录；保留当前版和上一版，仍在被运行中进程使用的旧版稍后再清理`,`准备 ${root} 下的插件文件`,`同步两端已安装插件；保留已有启用状态，不代为批准 hooks`,shim.directory?`安装自有命令 ${shim.files[0]!.file}`:shim.notice!,`Codex 配置中只更新 claude 命名空间相关的设置`,`平滑重启 broker；现有会话和 App Server 不受影响`];
+  if(needsTokenRepair)actions.unshift('修复损坏的本地 IPC 令牌并重新连接协调器');
   if(options.dryRun){verifyPublish(source.directory);return{dryRun:true,actions,bin:binPlan,launches,runtimeLaunches,notes:runtimeNotes,preflight,claudeBackground:background,versions,notice:'仅预览，没有写入文件、配置或停止进程。'};}
   const previousRuntime=activeRuntime(home),previousManifest=previousRuntime?runtimeManifest(previousRuntime.directory):undefined;
   const candidate=await stageRuntime(home,source.directory),launcher=path.join(home,'bin','nxbridge.cjs');
   if(pending&&candidate.buildId!==pending.buildId)throw new BridgeError('setup_recovery_conflict',`${pending.runtimeDirectory} 的发布版本已改变，未切换中断前选定的运行时。请恢复原版本后再运行一次同样的命令。`);
+  let repairedToken=false;
+  if(needsTokenRepair){
+    if(process.platform==='win32')await services.backgroundPreflight(home);
+    const startup=await reserveBrokerStartup(home,await processIdentity(process.pid));
+    try{repairedToken=await repairIpcToken(home,startup);}finally{await startup();}
+  }
   const entryChanged=(names:string[])=>!!previousRuntime&&runtimeEntriesChanged(previousManifest,candidate,names);
   if(pending)candidate.source=pending.source;
   state.hostHomes={codex:services.codexDirectory,claude:services.claudeDirectory};
@@ -294,6 +303,7 @@ async function setupInner(options:NonNullable<Parameters<typeof setup>[0]>,input
   await preparePlugins(home,{packageRoot:candidate.directory,launcher});state.disabled=false;state.marketplace=root;atomicJson(statePath,state);
   services.checkpoint?.('prepared');
   const notes:string[]=[...recoveryNotes,...runtimeNotes,...(source.repair?['原来的安装来源已经不在了，这次用私有目录里已安装的版本做修复；要升级，请用 --from 指定新的 publish 目录。']:[])],updates:unknown[]=[],reloadRequired={claude:false,codex:false};
+  if(repairedToken)notes.push('已重新生成损坏的本地 IPC 令牌。');
   if(background){saveClaudeBackground(home,config,background);if(background.notice)notes.push(background.notice);}
   for(const inventory of inventories){
     const {host}=inventory,marketKey=host==='claude'?'claudeMarketplace':'codexMarketplace',installedKey=host==='claude'?'claudeInstalled':'codexInstalled';
@@ -375,10 +385,15 @@ async function setupInner(options:NonNullable<Parameters<typeof setup>[0]>,input
   let releaseStartup:StartupReservation|undefined;
   try{
                                                 
-    if(process.platform==='win32'){await services.backgroundPreflight(home);releaseStartup=await reserveBrokerStartup(home,await processIdentity(process.pid));}
-    const before=await services.broker<{pid:number;runtime?:{generation:string}}>('ping',{}, {home,start:false});
-    await services.broker('shutdown',{releaseOwned:false,...(releaseStartup?{startupToken:releaseStartup.token}:{}),expectedBroker:{pid:before.pid,generation:before.runtime?.generation}},{home,start:false,mutation:true,timeout:60000});
-    const end=Date.now()+15000;while(liveProcess(before.pid)){if(Date.now()>end)throw new BridgeError('broker_stop_timeout','broker 尚未退出，未启动第二个实例。');await delay(50);}
+    if(process.platform==='win32'){if(!needsTokenRepair)await services.backgroundPreflight(home);releaseStartup=await reserveBrokerStartup(home,await processIdentity(process.pid));}
+    const before=await services.broker<{pid:number;runtime?:{generation:string}}>('ping',{}, {home,start:false}).catch(error=>{
+      if(repairedToken&&['ENOENT','ECONNREFUSED'].includes((error as NodeJS.ErrnoException).code??''))return;
+      throw error;
+    });
+    if(before){
+      await services.broker('shutdown',{releaseOwned:false,...(releaseStartup?{startupToken:releaseStartup.token}:{}),expectedBroker:{pid:before.pid,generation:before.runtime?.generation}},{home,start:false,mutation:true,timeout:60000});
+      const end=Date.now()+15000;while(liveProcess(before.pid)){if(Date.now()>end)throw new BridgeError('broker_stop_timeout','broker 尚未退出，未启动第二个实例。');await delay(50);}
+    }
     await releaseStartup?.assertCurrent();
     await services.broker('ping',{}, {home,...(releaseStartup?{reserved:true}:{})});brokerRestarted=true;
   }catch(error){if(!['ENOENT','ECONNREFUSED','EPIPE'].includes((error as NodeJS.ErrnoException).code??''))notes.push('broker 更新状态：'+describeError(error));}

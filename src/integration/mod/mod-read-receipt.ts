@@ -38,7 +38,8 @@ export async function openModReadReceipt(home:string,configHome:string,identity:
   const window={host:'claude' as const,configHome:normalizedHome(configHome),pid:identity.pid,procStart};
   const id=createHash('sha256').update(windowKey(window)).digest('hex'),secret=randomBytes(32).toString('hex');
   const receipt:ModReadReceipt={protocol:2,scope:'mod-read',id,secret,home:normalizedHome(home),configHome:window.configHome,native:{pid:identity.pid,procStart},sessionId:identity.record.sessionId,...(revision?{revision}:{}),openedAt:Date.now()};
-  atomicJson(filename(home,id),receipt);
+                                  
+  atomicJson(filename(home,id),receipt,{durability:'buffered'});
   return{id,secret};
 }
 

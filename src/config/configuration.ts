@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { atomicWriteText } from '../storage/atomic-file.js';
+import {stateDirectory} from '../storage/state-directory.js';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { stringify } from 'smol-toml';
@@ -47,7 +48,7 @@ export function readConfiguration(home:string):ConfigurationDocument{
 }
 export const loadBridgeConfig=(home:string):BridgeConfig=>readConfiguration(home).config;
 function atomicText(filename:string,text:string):void{
-  mkdirSync(path.dirname(filename),{recursive:true,mode:0o700});
+  stateDirectory(path.dirname(filename),0o700);
   atomicWriteText(filename,text);
 }
 function unchanged(current:ConfigurationDocument):void{

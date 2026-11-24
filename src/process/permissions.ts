@@ -1,11 +1,12 @@
 import {embeddedSource} from "../shared/embedded-source.js";
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {mkdirSync,chmodSync} from 'node:fs';
+import {chmodSync} from 'node:fs';
 import path from 'node:path';
 import {BridgeError} from '../shared/errors.js';
 import {windowsTool,windowsPowerShell} from '../shared/windows-tools.js';
 import {windowsIntegritySource,windowsIntegrityScript} from './windows/windows-integrity.js';
+import {stateDirectory} from '../storage/state-directory.js';
 const execute=promisify(execFile);
 const privateDirectories=new Map<string,Promise<void>|null>();
 let windowsSid:Promise<string>|undefined;
@@ -19,7 +20,7 @@ function currentWindowsSid():Promise<string>{
 
                                               
 export async function privateDirectory(directory: string,repair=false,recursiveRepair=false): Promise<void> {
-  const created=mkdirSync(directory,{recursive:true,mode:0o700}),key=path.resolve(directory),pending=privateDirectories.get(key);
+  const created=stateDirectory(directory,0o700),key=path.resolve(directory),pending=privateDirectories.get(key);
   if(pending){if(repair)await pending.catch(()=>{});else await pending;}
   if(created===undefined&&!repair&&privateDirectories.get(key)!==null)return;
   const work=protectDirectory(directory,repair,recursiveRepair);privateDirectories.set(key,work);
