@@ -1,6 +1,6 @@
 {
   "name": "nxbridge",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "license": "MIT",
   "description": "与 Codex 平等搭档进行原生异步通信"
 }
