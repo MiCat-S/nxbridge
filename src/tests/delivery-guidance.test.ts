@@ -75,7 +75,7 @@ test('status 文本：Codex 结束一轮没告诉 Claude，只在达到上限或
 test('读不到最新一步时状态只说进度暂时无法观测，不说没有进展；有进度证据时照旧',()=>{
   const status=(health:any)=>formatStatus({paired:true,self:{id:'c',host:'claude',name:'Claude',state:'busy'},partner:{id:'x',host:'codex',name:'Codex',state:'busy',health},pending:0,questions:0});
   const silent={state:'silent',turnId:'t',lastProgressAt:Date.now()-11*60000,tools:[]};
-  assert.match(status(silent),/分钟没有进展，原因未知/);
+  assert.match(status(silent),/分钟未见进展，原因未知/);
   const unverified=status({...silent,progressEvidence:false});
-  assert.match(unverified,/进度暂时无法观测/);assert.doesNotMatch(unverified,/没有进展/);
+  assert.match(unverified,/进度暂时无法观测/);assert.doesNotMatch(unverified,/没有进展|未见进展/);
 });

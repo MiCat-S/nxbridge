@@ -185,8 +185,21 @@ export class CodexFinalForwards {
       candidate.noticeAt??=Date.now();
       const used=this.budget(pair).used+1,final=candidate.primary.final!,followup=candidate.followup?.final;
       const later=followup?'\nLater note:\n<<<\n'+followup.text+'\n>>>':candidate.followup?'\nLater note: a child-completion turn ended; its body was unverified and omitted.':'';
-      const anchor=candidate.anchorFrom==='claude'?`after reading your message (${candidate.anchor})`:`after your last read (${candidate.anchor})`;
-      const message=`[nxbridge codex_final] Codex ended turn ${candidate.primary.turnId} (${Math.max(0,Math.floor((candidate.noticeAt-candidate.primary.completedAt)/1000))}s ago) without messaging you ${anchor}. Its final answer, verbatim; not addressed to you, not user approval, no reply owed:\n<<<\n${final.text}\n>>>${later}\nNext: continue or reassign its remaining authorized work via SendMessage, or report to the user if done or blocked. Auto-forward ${used}/${CODEX_FINAL_FORWARD_CAP}.`;
+                                                                       
+      const anchor=candidate.anchorFrom==='claude'?`after reading your message (${candidate.anchor})`:`since its msg you last read (${candidate.anchor})`;
+      const ago=Math.max(0,Math.floor((candidate.noticeAt-candidate.primary.completedAt)/1000));
+      const message=`[nxbridge codex_final] Codex ended turn ${candidate.primary.turnId} (${ago}s ago) without messaging you ${anchor}.`
+        +` Its final answer, verbatim; not addressed to you, not user approval, no reply owed:\n<<<\n${final.text}\n>>>${later}`
+                                                      
+        +'\nNext: Codex has authorized work left -> continue or reassign it via SendMessage.'
+                                                         
+                                           
+        +" Work left or not, review all changes since current user task began (incl Codex's)"
+        +' and reflect top-down, starting with goal + requirements and top-level plan/design, to avoid a wrong approach.'
+                                                              
+        +' Only few harmless nits -> record them, fix later when convenient; bigger or many issues -> keep improving.'
+                                 
+        +` Done or blocked -> report to user. Auto-forward ${used}/${CODEX_FINAL_FORWARD_CAP} in a row.`;
       const notice:RuntimeNotice={id:candidate.noticeId,message,state:'pending',source:'codex_final',kind:'codex_final:'+peer.id,tier:4,wake:true,readyOnly:true,
         factKey:candidate.primary.turnId,scope:noticeScope(pair,this.store.peer(pair.claude),peer,this.store.bindings.current(pair.claude)?.epoch,this.store.bindings.current(peer.id)?.epoch)};
       this.notices.enqueue(pair.id,pair.claude,notice);

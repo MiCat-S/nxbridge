@@ -21,12 +21,14 @@ const documents=[['docs/user-guide.md','README.md'],['LICENSE','LICENSE']].map((
                              
 rmSync(output,{recursive:true,force:true});mkdirSync(output);
 const common={bundle:true,minify:true,treeShaking:true,legalComments:'none',sourcemap:false,charset:'utf8',target:'node24',logLevel:'warning'};
+                                          
+const wrapped={...common,lineLimit:120};
 const metadata=JSON.parse(readFileSync(path.join(root,'package.json'),'utf8'));
 const external=['node:*','bufferutil','utf-8-validate'];
 const embeddedRecords=[];
                                                   
 const locales={name:'nxbridge-zod-locales',setup(context){context.onLoad({filter:/[\\/]zod[\\/]v4[\\/]locales[\\/]index\.js$/},args=>({contents:"export {default as en} from './en.js';",resolveDir:path.dirname(args.path),loader:'js'}));}};
-const vendorOptions={...common,platform:'node',format:'esm',splitting:true,chunkNames:'vendor-shared-[hash]',entryPoints:{'vendor-core':path.join(root,'tools/vendor-core.mjs'),'vendor-mcp':path.join(root,'tools/vendor-mcp.mjs')},outdir:output,outExtension:{'.js':'.mjs'},external,plugins:[locales],metafile:true,banner:{js:"import {createRequire as __nxCreateRequire} from 'node:module';const require=__nxCreateRequire(import.meta.url);"}};
+const vendorOptions={...wrapped,platform:'node',format:'esm',splitting:true,chunkNames:'vendor-shared-[hash]',entryPoints:{'vendor-core':path.join(root,'tools/vendor-core.mjs'),'vendor-mcp':path.join(root,'tools/vendor-mcp.mjs')},outdir:output,outExtension:{'.js':'.mjs'},external,plugins:[locales],metafile:true,banner:{js:"import {createRequire as __nxCreateRequire} from 'node:module';const require=__nxCreateRequire(import.meta.url);"}};
                                  
 const vendorBuild=await build(vendorOptions);
 const vendorImports=new Map([['zod','./vendor-core.mjs'],['ws','./vendor-core.mjs'],['smol-toml','./vendor-core.mjs'],...['server/index.js','server/stdio.js','types.js'].map(name=>['@modelcontextprotocol/sdk/'+name,'./vendor-mcp.mjs'])]);
@@ -38,7 +40,7 @@ const vendorResolve={name:'nxbridge-vendor-imports',setup(context){context.onRes
 const hookResolve={name:'nxbridge-hook-import',setup(context){context.onResolve({filter:/\/hook-control\.js$/},args=>path.basename(args.importer)==='hook-entry.ts'?{path:'./hook-control.mjs',external:true}:undefined);}};
                                   
 const evidenceImports={name:'nxbridge-evidence-source',setup(context){context.onResolve({filter:/^\.\.\/dist\/.+\.js$/},args=>({path:path.join(root,'src',args.path.slice('../dist/'.length).replace(/\.js$/,'.ts'))}));}};
-const runtimeOptions={...common,platform:'node',format:'esm',outdir:output,outExtension:{'.js':'.mjs'},define:{__NXBRIDGE_BUNDLED__:'true',__NXBRIDGE_VERSION__:JSON.stringify(metadata.version),__NXBRIDGE_IDENTITY_REVISION__:JSON.stringify(originalIdentityRevision(root)),'process.env.NODE_ENV':'"production"'},banner:{js:"import {createRequire as __nxCreateRequire} from 'node:module';const require=__nxCreateRequire(import.meta.url);"},external,metafile:true};
+const runtimeOptions={...wrapped,platform:'node',format:'esm',outdir:output,outExtension:{'.js':'.mjs'},define:{__NXBRIDGE_BUNDLED__:'true',__NXBRIDGE_VERSION__:JSON.stringify(metadata.version),__NXBRIDGE_IDENTITY_REVISION__:JSON.stringify(originalIdentityRevision(root)),'process.env.NODE_ENV':'"production"'},banner:{js:"import {createRequire as __nxCreateRequire} from 'node:module';const require=__nxCreateRequire(import.meta.url);"},external,metafile:true};
                                            
 const native=await build({...runtimeOptions,banner:{},entryPoints:{'runtime-native-source':path.join(root,'src/process/windows/native-sources.ts')},plugins:[embeddedCodePlugin(root,embeddedRecords)]});
 const runtimeResolve={name:'nxbridge-runtime-imports',setup(context){context.onResolve({filter:/\/(?:native-sources|dispatch)\.js$/},args=>{
