@@ -1,12 +1,21 @@
-import test from 'node:test';
+import test,{type TestContext} from 'node:test';
 import assert from 'node:assert/strict';
 import { TurnHealthTracker, SILENCE_MS, providerRetryInfo } from '../broker/health/turn-health.js';
 import { fixture } from './support/broker-fixture.js';
+import {writeFileSync} from 'node:fs';
+import path from 'node:path';
+import {temporary} from './support/temporary.js';
 const boundedResult=(method:string|undefined,thread:any)=>method==='thread/turns/list'?{data:[...(thread.turns??[])].reverse()}:method==='thread/items/list'?{data:(thread.turns?.at(-1)?.items??[]).slice(-1).map((item:any)=>({turnId:thread.turns.at(-1).id,item}))}:{thread};
+                                      
+function nativeThread(t:TestContext,thread:any):any{
+  const file=path.join(temporary(t),'native.jsonl');
+  writeFileSync(file,JSON.stringify({type:'session_meta',payload:{id:thread.id}})+'\n'+JSON.stringify({timestamp:new Date().toISOString(),type:'event_msg',payload:{type:'task_started',turn_id:thread.turns.at(-1).id}})+'\n','utf8');
+  return{...thread,path:file};
+}
 
 test('无法观测最新进展时撤回停滞提醒，不建议恢复；读取失败不能盖过同期原生进展',async t=>{
   t.mock.timers.enable({apis:['Date'],now:1000000});
-  const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),endpoint=f.store.endpoint(f.x.id)!,thread={id:'x',status:{type:'active'},turns:[{id:'t',status:'inProgress',items:[]}]};
+  const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),endpoint=f.store.endpoint(f.x.id)!,thread=nativeThread(t,{id:'x',status:{type:'active'},turns:[{id:'t',status:'inProgress',items:[]}]});
   f.store.updatePeer(f.x.id,{owner:'nxbridge',state:'busy'});f.broker.health.read(endpoint.address,thread);
   const task=f.store.accept(pair,f.c,'明确依赖','dependent',undefined,undefined,'explicit',true);f.store.transition(task.id,'contextObserved');
   f.codex.connect=async()=>({request:async(method:string)=>boundedResult(method,thread)}) as any;
@@ -37,9 +46,17 @@ test('观察恢复后的相同条目不冒充新进展；缺少概要保留未�
   now+=SILENCE_MS;assert.equal(other.read('endpoint',thread)?.lastProgressAt,now-SILENCE_MS,'首次真实条目只建立基线');
 });
 
+test('原生 sleep 扩展的开始与结束通知按工具生命周期处理，长等待不能变成无解释静默',()=>{
+  let now=1000;const tracker=new TurnHealthTracker(()=>now),params={threadId:'x',turnId:'turn',item:{id:'native-sleep',type:'sleep',durationMs:1500000}};
+  tracker.observe('endpoint',{method:'turn/started',params:{threadId:'x',turn:{id:'turn'}}});
+  tracker.observe('endpoint',{method:'item/started',params});const progress=tracker.get('endpoint','x')!.lastProgressAt;
+  now+=1500000;assert.equal(tracker.get('endpoint','x')?.state,'waitingTool');assert.equal(tracker.get('endpoint','x')?.lastProgressAt,progress);
+  tracker.observe('endpoint',{method:'item/completed',params});assert.equal(tracker.get('endpoint','x')?.state,'running');assert.deepEqual(tracker.get('endpoint','x')?.tools,[]);
+});
+
 test('停滞提醒按真实依赖与联络共同计时，回复后即使历史读取限频也撤回旧提醒',async t=>{
   t.mock.timers.enable({apis:['Date'],now:1000000});
-  const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),endpoint=f.store.endpoint(f.x.id)!,thread={id:'x',status:{type:'active'},turns:[{id:'long-turn',status:'inProgress',items:[]}]};
+  const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),endpoint=f.store.endpoint(f.x.id)!,thread=nativeThread(t,{id:'x',status:{type:'active'},turns:[{id:'long-turn',status:'inProgress',items:[]}]});
   f.store.updatePeer(f.x.id,{state:'busy'});f.broker.health.read(endpoint.address,thread);
   f.codex.connect=async()=>({request:async(method:string)=>boundedResult(method,thread)}) as any;
   t.mock.timers.tick(360000);const task=f.store.accept(pair,f.c,'新来的显式任务','new-task',undefined,undefined,'explicit',true);f.store.transition(task.id,'contextObserved');
@@ -58,7 +75,7 @@ test('unknown 成员的原生开放轮次继续核对，新工具进展解除误
   t.mock.timers.enable({apis:['Date'],now:1000000});
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),address=f.store.endpoint(f.x.id)!.address;
   f.store.updatePeer(f.x.id,{owner:'nxbridge',state:'unknown'});
-  const thread:any={id:'x',status:{type:'active'},turns:[{id:'long-turn',status:'inProgress',items:[]}]};
+  const thread=nativeThread(t,{id:'x',status:{type:'active'},turns:[{id:'long-turn',status:'inProgress',items:[]}]});
   f.codex.connect=async()=>({request:async(method:string)=>boundedResult(method,thread)}) as any;
   f.broker.health.read(address,thread);t.mock.timers.tick(SILENCE_MS);
   thread.turns[0].items.push({id:'sent-reply',type:'mcpToolCall',status:'completed',server:'claude',tool:'send_message'});
@@ -74,7 +91,7 @@ test('新鲜原生事件不因 unknown 重读，陈旧状态读取恢复成员�
   t.mock.timers.enable({apis:['Date'],now:1000000});
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),address=f.store.endpoint(f.x.id)!.address;
   f.store.updatePeer(f.x.id,{state:'unknown'});let reads=0;
-  const thread={id:'x',status:{type:'active'},turns:[{id:'t',status:'inProgress',items:[] as any[]}]};
+  const thread=nativeThread(t,{id:'x',status:{type:'active'},turns:[{id:'t',status:'inProgress',items:[] as any[]}]});
   f.codex.connect=async()=>({request:async(method:string)=>{if(method==='thread/read')reads++;return boundedResult(method,thread);}}) as any;
   f.broker.health.observe(address,{method:'turn/started',params:{threadId:'x',turn:{id:'t'}}});
   await(f.broker as any).runtimeHealth.checkPairTurnHealth(pair);assert.equal(reads,0);
@@ -238,7 +255,7 @@ test('真实依赖停滞十五分钟后被动提醒，恢复只在主动状态�
   t.mock.timers.enable({apis:['Date'],now:1000000});
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id);f.store.updatePeer(f.x.id,{owner:'nxbridge',state:'busy'});
   const task=f.store.accept(pair,f.c,'明确依赖','expected',undefined,undefined,'explicit',true);f.store.transition(task.id,'contextObserved');
-  const address=f.store.endpoint(f.x.id)!.address,thread={id:'x',status:{type:'active'},turns:[{id:'t',status:'inProgress',items:[{id:'secret',type:'agentMessage',text:'正文不得流入健康告警'}]}]};
+  const address=f.store.endpoint(f.x.id)!.address,thread=nativeThread(t,{id:'x',status:{type:'active'},turns:[{id:'t',status:'inProgress',items:[{id:'secret',type:'agentMessage',text:'正文不得流入健康告警'}]}]});
   f.codex.connect=async()=>({request:async(method:string)=>boundedResult(method,thread)}) as any;
   f.broker.health.read(address,thread);t.mock.timers.tick(900000);
   await f.broker.pump();assert.equal(f.claude.delivered.length,0);

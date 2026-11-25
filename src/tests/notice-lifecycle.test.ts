@@ -5,6 +5,9 @@ import { registration } from './support/registration.js';
 import {DeliveryHealth} from '../broker/health/delivery.js';
 import {emptyDeliveryCounts} from '../broker/health/contracts.js';
 import { modMonitorAdmission } from '../integration/mod/mod-protocol.js';
+import {writeFileSync} from 'node:fs';
+import path from 'node:path';
+import {temporary} from './support/temporary.js';
 
 const availability=(blocked:boolean)=>({state:blocked?'blocked' as const:'reachable' as const,reasons:blocked?['隔离故障']:[],checked_at:Date.now()});
 
@@ -104,7 +107,9 @@ test('异步探测中条件恢复，最后一次校验仍拒绝旧通知',async 
 
 test('旧 turn-health 路径在消费时复核进展，未提交的告警及恢复一并丢弃',async t=>{
   t.mock.timers.enable({apis:['Date'],now:1000000});
-  const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),endpoint=f.store.endpoint(f.x.id)!,thread={id:'x',turns:[{id:'native-turn',status:'inProgress',items:[]}]};
+  const file=path.join(temporary(t),'native.jsonl');
+  writeFileSync(file,JSON.stringify({type:'session_meta',payload:{id:'x'}})+'\n'+JSON.stringify({timestamp:new Date().toISOString(),type:'event_msg',payload:{type:'task_started',turn_id:'native-turn'}})+'\n','utf8');
+  const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),endpoint=f.store.endpoint(f.x.id)!,thread={id:'x',path:file,turns:[{id:'native-turn',status:'inProgress',items:[]}]};
   const task=f.store.accept(pair,f.c,'仍阻塞的显式任务','task',undefined,undefined,'explicit',true);f.store.transition(task.id,'contextObserved');
   f.store.updatePeer(f.x.id,{state:'busy'});f.broker.health.read(endpoint.address,thread);t.mock.timers.tick(900001);
   f.codex.connect=async()=>({request:async(method:string)=>method==='thread/turns/list'?{data:thread.turns}:method==='thread/items/list'?{data:[]}:{thread}}) as any;

@@ -21,6 +21,7 @@ import {probeProcesses} from '../../process/process.js';
 import {DeliveryHealth} from './delivery.js';
 import {noticeScope,unsettledCount,type RuntimeAvailability,type RuntimeNotice} from './contracts.js';
 import {readCodexThread} from '../../hosts/codex/codex-evidence.js';
+import {readCodexPendingTools} from '../../hosts/codex/codex-pending-tools.js';
 import {RuntimeIncidents} from './runtime-incidents.js';
 import {SKIPPED} from '../fault-boundary.js';
 import {CommunicationTips} from '../delivery/communication-tips.js';
@@ -64,6 +65,7 @@ export class BrokerHealthCoordinator {
   private healthRequests=new Set<Promise<unknown>>();
   private healthCheckedAt=0;
   private turnHealthProbes=new Map<string,{key:string;at:number}>();
+  private pendingToolEvidence=new Map<string,{scope:string;tools:string[];complete:boolean}>();
   constructor(private readonly environment:HealthEnvironment,private readonly services:HealthServices,private readonly hooks:HealthHooks){}
   private runtimeEndpoint(id:string):Endpoint|undefined{return this.environment.store.endpoint(id)??this.environment.store.endpoints(id).at(-1);}
   get pending():boolean{return this.healthRequests.size>0;}
@@ -236,8 +238,36 @@ export class BrokerHealthCoordinator {
     }
 
   modelRequestHealth(peer:Peer,endpoint:Endpoint|undefined,health:TurnHealth|undefined):TurnHealth|undefined{
+      const pending=this.pendingToolEvidence.get(peer.id);
+      if(health?.state==='silent'&&peer.host==='codex'){
+        const current=pending&&pending.scope===this.pendingToolScope(peer,endpoint,health);
+        health=current?{...health,tools:[...pending.tools],state:pending.tools.length?'waitingTool':'silent',progressEvidence:health.progressEvidence!==false&&pending.complete}:{...health,progressEvidence:false};
+      }
       if(!health||peer.host!=='codex'||!peer.sessionId||!endpoint?.configHome||!endpoint.pid)return health;
       return withModelRequest(health,this.modelRequests.read(endpoint.configHome,peer.sessionId,health.turnId,endpoint.pid));
+    }
+
+  private pendingToolScope(peer:Peer,endpoint:Endpoint|undefined,health:TurnHealth):string{
+      return JSON.stringify([peer.sessionId,endpoint?.epoch,endpoint?.active,endpoint?.bindingEpoch,health.turnId,health.lastEventAt,health.lastProgressAt,health.state,health.tools,endpoint?.mode==='app-server'?this.services.health.revision(endpoint.address,peer.sessionId!):null]);
+    }
+
+  private claimTurnHealthProbe(peer:Peer,endpoint:Endpoint):boolean{
+      const key=JSON.stringify([peer.sessionId,endpoint.address,endpoint.epoch]),previous=this.turnHealthProbes.get(peer.id),now=Date.now();
+      if(previous?.key===key&&now-previous.at<RECENT_PROGRESS_MS)return false;
+      this.turnHealthProbes.set(peer.id,{key,at:now});return true;
+    }
+
+  private async probePendingTools(peer:Peer,endpoint:Endpoint,health:TurnHealth,file:unknown):Promise<TurnHealth|undefined>{
+      const scope=this.pendingToolScope(peer,endpoint,health),evidence=await readCodexPendingTools(file,peer.sessionId!,health.turnId);
+      const current=this.environment.store.peer(peer.id),currentEndpoint=this.environment.store.endpoint(peer.id);
+      if(current.sessionId!==peer.sessionId||currentEndpoint?.epoch!==endpoint.epoch)throw new BridgeError('session_changed','工具等待核对期间目标会话已经改变。');
+      const latest=endpoint.mode==='app-server'?this.services.health.get(endpoint.address,peer.sessionId!):this.services.foregroundHealth.get(current);
+                                              
+      if(latest&&this.pendingToolScope(current,currentEndpoint,latest)===scope){
+        this.pendingToolEvidence.delete(peer.id);this.pendingToolEvidence.set(peer.id,{scope,tools:evidence?.calls.map(call=>call.id)??[],complete:evidence?.complete===true});
+        while(this.pendingToolEvidence.size>64)this.pendingToolEvidence.delete(this.pendingToolEvidence.keys().next().value!);
+      }else if(latest?.state==='silent')this.pendingToolEvidence.set(peer.id,{scope:this.pendingToolScope(current,currentEndpoint,latest),tools:[],complete:false});
+      return latest;
     }
 
   claudeHealth(peer:Peer,child:ClaudeChildRecord):TurnHealth|undefined{
@@ -265,7 +295,10 @@ export class BrokerHealthCoordinator {
       if(current.sessionId!==peer.sessionId||store.endpoint(peer.id)?.epoch!==endpoint.epoch)throw new BridgeError('session_changed','原生状态核对期间目标会话已经改变。');
       await this.refreshCodexPermission(current,result.thread.path);
       if(this.services.health.revision(endpoint.address,peer.sessionId!)===revision&&store.peer(peer.id).state==='unknown'&&status?.type)store.updatePeer(peer.id,{state:status.activeFlags?.some((flag:string)=>/approval|input/i.test(flag))?'needsHuman':status.type==='active'?'busy':status.type==='idle'?'ready':status.type==='notLoaded'?'offline':'unknown'});
-      return this.modelRequestHealth(peer,endpoint,this.services.health.read(endpoint.address,result.thread,revision));
+      let health=this.services.health.read(endpoint.address,result.thread,revision);
+                                            
+      if(health?.state==='silent')health=await this.probePendingTools(peer,endpoint,health,result.thread.path??endpoint.nativeSession?.transcriptPath);
+      return this.modelRequestHealth(peer,endpoint,health);
     }
 
   async refreshCodexPermission(peer:Peer,file:unknown):Promise<void>{
@@ -345,7 +378,7 @@ export class BrokerHealthCoordinator {
 
   private turnNoticeTier(pair:Pair,peer:Peer,health:TurnHealth|undefined):1|3{
     const {store}=this.environment;
-      if(!health||health.progressEvidence===false||providerBlocked(health)||store.questions(true).some(q=>q.from===peer.id||q.to===peer.id))return 1;
+      if(!health||health.state==='waitingTool'||health.progressEvidence===false||providerBlocked(health)||store.questions(true).some(q=>q.from===peer.id||q.to===peer.id))return 1;
       const since=store.deliveryDependencySince(pair.id,peer.id);if(since===undefined)return 1;
                                                  
       const contact=Math.max(store.lastMessageFacts(pair.id,peer.id)?.createdAt??0,store.setting<number>('functionalDelivery:'+peer.id)??0);
@@ -357,13 +390,16 @@ export class BrokerHealthCoordinator {
       if(!this.hooks.enabled(pair.codex)||!this.hooks.enabled(pair.claude))return;
       const peer=store.peer(pair.codex),endpoint=store.endpoint(peer.id);if(!peer.sessionId||!endpoint)return;
       if(endpoint.mode!=='app-server'){
-        const health=this.services.foregroundHealth.get(peer);
+        let health=this.services.foregroundHealth.get(peer);
         const known=store.setting<{sessionId:string;file:string}>('codexTranscript:'+peer.id);
+        let file:unknown=known?.sessionId===peer.sessionId?known.file:endpoint.nativeSession?.transcriptPath;
         if(endpoint.configHome&&health&&!['ready','failed'].includes(health.state)){
-          const file=known?.sessionId===peer.sessionId?known.file:sessionFile(endpoint.configHome,peer.sessionId);
+          file??=sessionFile(endpoint.configHome,peer.sessionId);
           if(file&&known?.file!==file)store.setSetting('codexTranscript:'+peer.id,{sessionId:peer.sessionId,file});
           await this.refreshCodexPermission(peer,file);
+          health=this.services.foregroundHealth.get(store.peer(peer.id));
         }
+        if(health?.state==='silent'&&this.claimTurnHealthProbe(peer,endpoint))await this.probePendingTools(peer,endpoint,health,file);
         return;
       }
       type Incident={id:string;pairId:string;peerId:string;turnId:string;lastProgressAt:number;recovered?:boolean;scope?:string;endpointEpoch?:string;alertAdmitted?:boolean;recoveryId?:string};
@@ -378,20 +414,18 @@ export class BrokerHealthCoordinator {
       if(peer.state!=='busy'&&peer.state!=='unknown'&&(!previous||previous.recovered)&&!openTurn)return;
       let baselineOnly=false;
       if(!health||Date.now()-health.lastEventAt>=RECENT_PROGRESS_MS||health.state==='silent'||health.state==='networkRetrying'){
-        const key=JSON.stringify([peer.sessionId,endpoint.address,endpoint.epoch]),previousProbe=this.turnHealthProbes.get(peer.id),now=Date.now();
                                                   
-        if(previousProbe?.key===key&&now-previousProbe.at<RECENT_PROGRESS_MS)return;
-        this.turnHealthProbes.set(peer.id,{key,at:now});
+        if(!this.claimTurnHealthProbe(peer,endpoint))return;
         baselineOnly=!this.services.health.hasSnapshot(endpoint.address,peer.sessionId);
         try{health=await this.probeTurnHealth(peer,endpoint);}catch(error){store.event('health.probe.failed',{peerId:peer.id,error:describeError(error)});return;}
       }
       if(this.hooks.stopped()||!health||store.pairFor(peer.id)?.id!==pair.id||this.noticeScope(pair,store.peer(recipient.id))!==scope||store.endpoint(peer.id)?.epoch!==endpoint.epoch)return;
-      if(previous?.pairId===pair.id&&!previous.recovered&&(health.turnId!==previous.turnId||(health.observedProgressAt??0)>previous.lastProgressAt||['ready','failed'].includes(health.state))){
+      if(previous?.pairId===pair.id&&!previous.recovered&&(health.turnId!==previous.turnId||(health.observedProgressAt??0)>previous.lastProgressAt||['ready','failed','waitingTool'].includes(health.state))){
         previous.recovered=true;store.setSetting(incidentKey,previous);store.event('health.recovered',{peerId:peer.id,turnId:previous.turnId});
         this.services.deliveryHealth.cancel(pair.id,recipient.id,previous.id);
         if(previous.alertAdmitted){
           previous.recoveryId??=randomUUID();store.setSetting(incidentKey,previous);
-          const message=`nxbridge runtime monitor (not partner reply or user msg): codex ${health.state==='failed'?'turn failed, not recovered':health.state==='ready'?'turn ended ('+health.completion+')':'progress resumed'}, turn ${previous.turnId}; nothing replayed; current turn ${health.turnId}, state ${health.state}${health.error?'; native error: '+health.error:''}`;
+          const message=`nxbridge runtime monitor (not partner reply or user msg): codex ${health.state==='failed'?'turn failed, not recovered':health.state==='ready'?'turn ended ('+health.completion+')':health.state==='waitingTool'?'native tool wait confirmed; earlier silence alert withdrawn, no new progress claimed':'progress resumed'}, turn ${previous.turnId}; nothing replayed; current turn ${health.turnId}, state ${health.state}${health.error?'; native error: '+health.error:''}`;
           this.services.deliveryHealth.enqueue(pair.id,recipient.id,{id:previous.recoveryId,message,state:'pending',source:'turn_health',kind:'turn_health:'+peer.id,phase:'recovery',scope});
         }
       }
@@ -411,7 +445,7 @@ export class BrokerHealthCoordinator {
       if(previous?.recoveryId)this.services.deliveryHealth.cancel(pair.id,recipient.id,previous.recoveryId);
       const incident:Incident={id:randomUUID(),pairId:pair.id,peerId:peer.id,turnId:health.turnId,lastProgressAt:health.lastProgressAt,scope,endpointEpoch:endpoint.epoch};
       store.setSetting(incidentKey,incident);store.event('health.alert',{...incident,health:{state:health.state,lastEventAt:health.lastEventAt,...(health.retry?{retry:health.retry}:{}),...(health.error?{error:health.error}: {})}});
-        const message=`nxbridge runtime monitor (not partner reply or user msg): codex ${health.state}, turn ${health.turnId}, last progress ${new Date(health.lastProgressAt).toISOString()}. ${health.retry?'native retry: '+health.retry.message:'no progress 10+ min, cause unknown, not proof of deadlock'}. work + msg ledger kept. dont resend tasks or kill processes. details: nxbridge status/doctor${health.retry?'; keep native retry; interrupt/restart cannot repair a provider outage':'; explicit recovery (user, outside codex): nxbridge recover codex --turn '+health.turnId}`;
+        const message=`nxbridge runtime monitor (not partner reply or user msg): codex ${health.state}, turn ${health.turnId}, last progress ${new Date(health.lastProgressAt).toISOString()}. ${health.retry?'native retry: '+health.retry.message:'no observed progress 10+ min, cause unknown, not proof of deadlock'}. work + msg ledger kept. dont resend tasks or kill processes. details: nxbridge status/doctor${health.retry?'; keep native retry; interrupt/restart cannot repair a provider outage':'; explicit recovery (user, outside codex): nxbridge recover codex --turn '+health.turnId}`;
       this.services.deliveryHealth.enqueue(pair.id,recipient.id,{id:incident.id,message,tier,wake:false,state:'pending',source:'turn_health',kind:'turn_health:'+peer.id,phase:'alert',scope});
     }
 }

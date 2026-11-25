@@ -32,7 +32,7 @@ export function currentHealthIssue(value:TurnHealth,now=Date.now()):TurnHealth{
   return value;
 }
 const incoming=(item:any)=>item?.type==='functionCallOutput'&&item.namespace==='claude'&&item.name==='receive_messages';
-const tool=(item:any)=>/^(?:commandExecution|mcpToolCall|dynamicToolCall|functionCall|customToolCall|webSearch|fileChange)$/i.test(item?.type??'');
+const tool=(item:any)=>/^(?:commandExecution|mcpToolCall|dynamicToolCall|functionCall|customToolCall|webSearch|fileChange|sleep)$/i.test(item?.type??'');
 function turnFingerprint(turn:any,items:any[]):string{
   const hash=createHash('sha256').update(JSON.stringify([turn.id,turn.status,items.length]));
   for(const item of items){
